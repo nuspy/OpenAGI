@@ -4,8 +4,10 @@
 **Project type:** Autonomous cognitive / agentic architecture  
 **Primary implementation target:** Cloud Code  
 **Status:** Architecture and implementation specification  
-**Version:** 1.0  
+**Version:** 1.1  
 **Date:** 2026-08-30
+
+> Revision 1.1 applies the approved modifications recorded in `ANALISI_E_PROPOSTE.md`: goal governance and corrigibility, prompt-injection defense, bounded autonomy budgets, vertical-slice phasing with a Phase 0 minimum viable loop, event sourcing and deterministic replay, calibrated scoring, causal-graph and policy-learning guardrails, cold start, tool-acquisition security, compliance and privacy, two-tier guardrails, decision supervisor, GUI/API layer, ports & adapters, deliberation, imported skills and MCP servers, and the normative canonical schema (Appendix A). Section numbering shifted with the inserted sections.
 
 ---
 
@@ -103,6 +105,8 @@ Conceptually:
 
 The loop is persistent.
 
+Design classification: every component is labeled either a **durable complement** (functions a model cannot provide by definition: persistence, authority and security boundaries, budgets, audit trail, actuation, provenance) or an **erodible substitute** (compensates current model weaknesses: planning scaffolds, manual context management, explicit branching). Substitutes live behind ports and must be cheap to remove or reduce to pass-throughs as models improve; complements are permanent.
+
 ---
 
 # 3. Goal and Motivation Model
@@ -151,6 +155,8 @@ A concrete unit of work.
 A single executable operation.
 
 The lower levels are disposable. The higher levels are progressively more stable.
+
+Levels are semantic roles, not mandatory layers: a simple goal may instantiate three levels, a complex one seven. What matters is the role semantics (stability decreasing, disposability increasing downward), not the depth of the chain.
 
 ---
 
@@ -246,7 +252,9 @@ For multiple goals:
         - risks
         - opportunity cost
 
-The exact scoring function must be configurable and should not be hard-coded into the LLM.
+The exact scoring function must be configurable and should not be hard-coded into the LLM. The canonical form of the decision-value function is defined in Appendix A.
+
+Sensitivity gate: before committing a significant decision, perturb the low-confidence weights; if the ranking of alternatives flips, the decision is not mature — trigger an information-gain action or escalate.
 
 ---
 
@@ -344,6 +352,7 @@ A relationship should contain at least:
     dependencies
     side_effects
     causal_evidence
+    validation_status
     provenance
     created_at
     updated_at
@@ -355,12 +364,10 @@ Relationship types include:
 - ENABLE
 - REQUIRED
 - BLOCK
-- OBSTRUCT
+- INHIBIT
 - RISK
 - ANTAGONIZE
 - DEPENDS_ON
-- ENABLES
-- INHIBITS
 - SUBSTITUTES
 - AMPLIFIES
 - MITIGATES
@@ -370,7 +377,9 @@ Relationship types include:
 - INVALIDATES
 - SUPERSEDES
 
-Do not collapse these into one generic positive/negative weight.
+Deprecated aliases: ENABLES -> ENABLE, OBSTRUCT -> BLOCK. BLOCK prevents progress while present; INHIBIT reduces strength or probability without preventing.
+
+Do not collapse these into one generic positive/negative weight. The normative attribute list and type semantics are defined in Appendix A.
 
 ---
 
@@ -409,6 +418,13 @@ How long before the effect appears?
 What alternative uses of the same resources are lost?
 
 The LLM may propose values, but structured validators and historical data must calibrate them.
+
+Elicitation discipline:
+
+- prefer ordinal elicitation (critical / high / medium / low) mapped to coarse numeric bands over pseudo-precise decimals;
+- prefer pairwise comparisons for cross-goal priorities;
+- every estimate carries explicit uncertainty;
+- stated precision must never exceed input precision.
 
 ---
 
@@ -451,6 +467,14 @@ For every important action:
 7. record uncertainty.
 
 Do not assume that a locally negative action is globally negative.
+
+Propagation guardrails:
+
+- every causal edge carries a validation status: HYPOTHESIZED, OBSERVED, VALIDATED;
+- default propagation depth is 2–3 hops; deeper propagation only along validated chains;
+- uncertainty compounds multiplicatively along a path;
+- a decision above the impact threshold may not rest on an unvalidated multi-hop chain: validate the weakest link first, or escalate;
+- graph hygiene: stale or never-corroborated edges are periodically pruned.
 
 ---
 
@@ -604,6 +628,14 @@ For every capability gap:
 
 If no tool exists, the agent may create a tool, test it and register it in the Tool Graph.
 
+Acquisition security (applies to discovered, imported and self-built tools):
+
+- sandbox-first execution;
+- provenance verification;
+- least-privilege credentials per tool;
+- pinned versions; dependency scanning for built tools;
+- promotion to risk class EXTERNAL_COMMUNICATION or higher requires human approval through the Decision Supervisor.
+
 ---
 
 # 15. Tool Graph
@@ -638,11 +670,45 @@ Each tool must have:
 
 ---
 
-# 16. Browser / Web Agent
+# 16. Ports and Adapters for External Integrations
+
+Every external integration is defined by a port: a typed, versioned contract owned by this architecture.
+
+    Port (owned contract)
+       |
+       +--> Adapter A (implementation)
+       +--> Adapter B (alternative implementation)
+       +--> Mock adapter (testing)
+
+Rules:
+
+- the cognitive core depends only on ports, never on concrete providers;
+- each port ships with a mock implementation and a conformance test suite;
+- a new adapter must pass the conformance suite in sandbox before production use;
+- adapters are swappable behind feature flags;
+- where an external API does not match the port, a bridge translates.
+
+Initial ports:
+
+    llm_provider        (the existing provider library integrates as an adapter)
+    browser             (agentic browser implementations)
+    vault_payments
+    voice_call          (Call Happy Call integrates later as an adapter; only port + mock initially)
+    email
+    sms
+    identity_2fa
+    skill_package       (imported skills)
+    mcp_server          (Model Context Protocol client)
+
+This keeps provider choices reversible and lets existing external applications integrate without modifying the core.
+
+---
+
+# 17. Browser / Web Agent
 
 The initial toolset must include an agent-controlled browser.
 
-Support should be designed behind a browser abstraction layer so Chromium-based and Firefox-based implementations can be swapped.
+Support should be designed behind a browser abstraction layer so Chromium-based and Firefox-based implementations can be swapped. The browser is a port in the sense of the Ports and Adapters section: typed contract, mock implementation, conformance suite.
 
 Required capabilities:
 
@@ -680,7 +746,7 @@ The browser tool must expose the resulting status to the controller.
 
 ---
 
-# 17. Online Payments and Financial Tools
+# 18. Online Payments and Financial Tools
 
 The architecture must support authorized online payments through a secure financial tool.
 
@@ -712,6 +778,8 @@ The LLM should receive a capability such as:
 
 rather than card numbers.
 
+The vault is a port with substitutable provider adapters. Payment flows are designed for strong customer authentication (PSD2/SCA): human confirmation above thresholds is the normal case, not an exception (see Compliance and Privacy).
+
 Payment policy must support:
 
 - per-transaction limits;
@@ -727,7 +795,7 @@ Payment policy must support:
 
 ---
 
-# 18. Authentication and 2FA
+# 19. Authentication and 2FA
 
 The system must support authenticated workflows without exposing secrets to the reasoning model.
 
@@ -755,7 +823,7 @@ Authentication secrets must never be written into the audit journal.
 
 ---
 
-# 19. SMS and Email
+# 20. SMS and Email
 
 The system must have optional connectors for:
 
@@ -784,7 +852,7 @@ The controller decides whether the message changes the world state or goal prior
 
 ---
 
-# 20. Voice and Human Communication
+# 21. Voice and Human Communication
 
 The system must integrate the existing project:
 
@@ -813,9 +881,11 @@ Use:
 
 The cognitive architecture should not know implementation details of Call Happy Call. It should see a generic communication tool interface.
 
+Initially only the port and a mock implementation are built; the existing application integrates later as an adapter (with a bridge where APIs do not match).
+
 ---
 
-# 21. Human Cooperation
+# 22. Human Cooperation
 
 Human interaction is not merely an output channel.
 
@@ -857,7 +927,7 @@ Communication can occur through:
 
 ---
 
-# 22. AI-to-AI Cooperation
+# 23. AI-to-AI Cooperation
 
 The architecture must support discussion with another AI.
 
@@ -891,7 +961,7 @@ Do not automatically trust another AI. Its claims become evidence with provenanc
 
 ---
 
-# 23. Reason / Motivation Model
+# 24. Reason / Motivation Model
 
 Understanding "why" is a core requirement.
 
@@ -936,7 +1006,7 @@ It must not treat an inferred human motivation as a fact.
 
 ---
 
-# 24. Human Motivation Inference
+# 25. Human Motivation Inference
 
 When analyzing a human behavior:
 
@@ -975,7 +1045,7 @@ Motivation hypotheses can influence strategy but must remain explicitly uncertai
 
 ---
 
-# 25. Why Analysis
+# 26. Why Analysis
 
 Every important node and decision should be able to answer:
 
@@ -994,7 +1064,7 @@ This produces explainable strategic behavior.
 
 ---
 
-# 26. Persistent Audit Journal
+# 27. Persistent Audit Journal
 
 The journal is the system's authoritative chronological record of experience.
 
@@ -1028,9 +1098,34 @@ Suggested structure:
 
 Store reasoning summaries and decision-relevant evidence, not unrestricted private chain-of-thought.
 
+The journal is part of the event store, which is the single source of truth for all state (see Event Sourcing, Consistency and Deterministic Replay).
+
 ---
 
-# 27. Audit Engine
+# 28. Event Sourcing, Consistency and Deterministic Replay
+
+The event store is the single source of truth.
+
+Rules:
+
+1. Every state change — by the controller, a background worker, or a human through the GUI — is an event appended to the event store.
+2. Graph store, memory stores, policy store and GUI views are derived projections, rebuildable from events.
+3. Workers are idempotent; concurrent writes use optimistic concurrency (or a single writer per aggregate).
+4. Readers use snapshot reads; no reader blocks the writer.
+5. Human edits from the GUI are events with provenance human_edit.
+
+Deterministic replay:
+
+    event store + logged LLM inputs/outputs
+        |
+        v
+    faithful re-simulation of any past decision
+
+Replay is required for debugging, audits and regression tests. It must be designed in from the first phase; it cannot be retrofitted.
+
+---
+
+# 29. Audit Engine
 
 Auditing must operate continuously and at multiple time scales.
 
@@ -1056,7 +1151,7 @@ The audit engine must be able to interrupt normal execution.
 
 ---
 
-# 28. Decision Quality vs Outcome Quality
+# 30. Decision Quality vs Outcome Quality
 
 This distinction is mandatory.
 
@@ -1089,7 +1184,7 @@ Outcome quality depends on:
 
 ---
 
-# 29. Decision Abstraction
+# 31. Decision Abstraction
 
 Concrete decisions must be converted into generalized patterns.
 
@@ -1129,7 +1224,7 @@ This abstraction is reusable in unrelated domains.
 
 ---
 
-# 30. Policy Representation
+# 32. Policy Representation
 
 A policy should contain:
 
@@ -1153,6 +1248,7 @@ A policy should contain:
 Policy states:
 
     CANDIDATE
+    SHADOW
     ACTIVE
     DEGRADED
     UNDER_REVIEW
@@ -1161,9 +1257,18 @@ Policy states:
 
 Policies must evolve rather than becoming immutable rules.
 
+Lifecycle guardrails:
+
+- a policy requires a minimum number of independent supporting episodes before ACTIVE;
+- SHADOW mode precedes activation: the policy recommends without acting, and counterfactual agreement with actual decisions is logged;
+- default applicability scope is the domain of origin; broadening requires transfer evidence;
+- confidence decays if the policy is not reconfirmed (aging);
+- conflicts: the more specific policy wins; unresolved conflicts escalate;
+- high-use policies are periodically revalidated.
+
 ---
 
-# 31. Pattern Matching
+# 33. Pattern Matching
 
 Retrieval must not rely solely on vector similarity.
 
@@ -1189,9 +1294,11 @@ Conceptually:
 
 A semantically similar historical decision may still be causally irrelevant.
 
+The historical_reliability term must come from measured calibration statistics, not from self-assessed confidence.
+
 ---
 
-# 32. Counterfactual Analysis
+# 34. Counterfactual Analysis
 
 For significant decisions, the system should estimate:
 
@@ -1211,7 +1318,7 @@ Counterfactuals must be labeled as estimates, not facts.
 
 ---
 
-# 33. Memory Architecture
+# 35. Memory Architecture
 
 Use multiple storage mechanisms.
 
@@ -1232,9 +1339,11 @@ Generalized decision rules and learned strategies.
 
 Do not put everything into the vector database.
 
+All stores except the event store are derived projections and must be rebuildable from events. Each store defines retention: TTL/archival classes, consolidation triggers, and controlled forgetting — unbounded growth degrades retrieval precision.
+
 ---
 
-# 34. Memory Layers
+# 36. Memory Layers
 
 At minimum:
 
@@ -1258,7 +1367,7 @@ How capable/reliable the system is.
 
 ---
 
-# 35. Memory Tree / Memory Graph
+# 37. Memory Tree / Memory Graph
 
 Memory should be hierarchical and graph-linked.
 
@@ -1280,7 +1389,7 @@ The main agent must not load the entire history into context.
 
 ---
 
-# 36. Memory Agent
+# 38. Memory Agent
 
 A dedicated background memory agent should:
 
@@ -1293,7 +1402,10 @@ A dedicated background memory agent should:
 - update policy candidates;
 - identify forgotten/underused knowledge;
 - identify unreliable sources;
-- surface relevant historical failures.
+- surface relevant historical failures;
+- apply retention policies (TTL, archival, controlled forgetting);
+- open work items on detected contradictions rather than leaving them passive;
+- measure retrieval quality (precision on real usage).
 
 The main agent asks:
 
@@ -1303,7 +1415,7 @@ The memory agent responds with a bounded context package.
 
 ---
 
-# 37. Context Management
+# 39. Context Management
 
 Context is a finite resource.
 
@@ -1331,7 +1443,7 @@ rather than the entire historical context.
 
 ---
 
-# 38. Research and Knowledge Acquisition
+# 40. Research and Knowledge Acquisition
 
 When the system encounters a knowledge gap:
 
@@ -1365,7 +1477,7 @@ The system must record what was learned and how reliable the source was.
 
 ---
 
-# 39. Active Learning
+# 41. Active Learning
 
 The system should sometimes perform an action primarily because it reduces uncertainty.
 
@@ -1386,7 +1498,7 @@ The agent can decide:
 
 ---
 
-# 40. Hypothesis Engine
+# 42. Hypothesis Engine
 
 The system should not generate only one plan.
 
@@ -1425,7 +1537,7 @@ Process:
 
 ---
 
-# 41. Strategy Branching
+# 43. Strategy Branching
 
 Strategies should form a search tree or DAG.
 
@@ -1452,7 +1564,7 @@ Branch lifecycle:
 
 ---
 
-# 42. Recovery and Cognitive Version Control
+# 44. Recovery and Cognitive Version Control
 
 The architecture must support rollback.
 
@@ -1479,7 +1591,7 @@ This is analogous to version control for cognition.
 
 ---
 
-# 43. World Model and Self Model
+# 45. World Model and Self Model
 
 Maintain two distinct models.
 
@@ -1505,7 +1617,7 @@ The self-model must be updated by empirical evidence.
 
 ---
 
-# 44. Prediction and Calibration
+# 46. Prediction and Calibration
 
 Important decisions should produce explicit predictions.
 
@@ -1539,9 +1651,11 @@ Example:
 
 This affects future tool selection and verification requirements.
 
+Calibration is measured with standard metrics (Brier score, Expected Calibration Error), per domain, from the first day of operation.
+
 ---
 
-# 45. Meta-Cognitive Audit
+# 47. Meta-Cognitive Audit
 
 The system must periodically inspect its own behavior.
 
@@ -1563,7 +1677,21 @@ These observations update the self-model and policies.
 
 ---
 
-# 46. Goal / Graph Reconciliation Cycle
+# 48. Cold Start, Seeding and Earned Autonomy
+
+The learning machinery is empty exactly when the system is most error-prone.
+
+Mitigations:
+
+1. Seed policies: a hand-written starter pack (including the lessons already encoded in the design documents), marked provenance = seed.
+2. Curriculum: scenarios run in sandbox/simulation before real-world actions.
+3. Apprentice mode: escalation thresholds start high; the controller relaxes them per domain only as measured calibration accumulates.
+
+Autonomy is earned with evidence, never presumed. Budget expansion remains a human decision (see Human Authorization and Bounded Autonomy).
+
+---
+
+# 49. Goal / Graph Reconciliation Cycle
 
 This is the central background process.
 
@@ -1587,11 +1715,11 @@ Repeatedly:
 16. reallocate resources;
 17. select next actions.
 
-This process must operate continuously.
+This process must operate continuously, but incrementally: reconciliation is event-driven with dirty-marking — only the subgraph affected by new events is re-evaluated — while full sweeps run only at the macro and meta timescales. Every relevant node carries a review_interval.
 
 ---
 
-# 47. Multi-Time-Scale Control
+# 50. Multi-Time-Scale Control
 
 Use at least four control loops.
 
@@ -1615,7 +1743,7 @@ Higher loops can invalidate lower-level work.
 
 ---
 
-# 48. Controller Responsibilities
+# 51. Controller Responsibilities
 
 The deterministic controller should own:
 
@@ -1639,9 +1767,11 @@ The deterministic controller should own:
 
 The LLM should propose reasoning outputs; the controller should decide whether and how those outputs become system actions.
 
+The controller executes; the Decision Supervisor independently issues verdicts on significant decisions before execution (see Decision Supervisor).
+
 ---
 
-# 49. LLM Interface
+# 52. LLM Interface
 
 LLM calls should be structured.
 
@@ -1671,9 +1801,17 @@ Output should be structured into:
 
 The controller validates the output before execution.
 
+Gateway requirements:
+
+- structured outputs are validated against versioned schemas; on failure: bounded repair loop, then fallback model, then escalation;
+- model routing by cost and function: small models for classification/retrieval/extraction, large models for strategic reasoning;
+- critics use a different model family from the generator where possible (mitigates correlated errors and multi-agent confirmation);
+- all inputs and outputs are logged for deterministic replay;
+- costs are accounted per cognitive function.
+
 ---
 
-# 50. Tool Execution Contract
+# 53. Tool Execution Contract
 
 Every tool call should produce:
 
@@ -1702,9 +1840,11 @@ Example risk classes:
 
 High-impact operations should have explicit authorization policies.
 
+Newly acquired tools enter at the most restrictive plausible risk class; promotion requires human approval.
+
 ---
 
-# 51. Human Authorization
+# 54. Human Authorization and Bounded Autonomy
 
 Human approval should be configurable by policy rather than hard-coded.
 
@@ -1727,9 +1867,18 @@ The same model applies to:
 - irreversible actions;
 - high-risk external actions.
 
+Bounded autonomy — budgets are first-class resources enforced by the controller and the Decision Supervisor, never by the LLM:
+
+- spend per time window;
+- number of external communications per time window;
+- irreversible-class actions always require fresh authorization (never batch);
+- compute/token budget per goal.
+
+Ratchet principle: budgets expand only by explicit human decision — never through policy learning or a system decision. Budget definitions live in Tier 1 guardrails.
+
 ---
 
-# 52. Background Agents
+# 55. Background Agents
 
 Recommended specialist agents:
 
@@ -1746,7 +1895,7 @@ External information acquisition.
 Alternative strategy generation.
 
 ### Critic Agent
-Independent challenge.
+Independent challenge (preferably served by a different model family than the generator).
 
 ### Tool Discovery Agent
 Searches for new capabilities.
@@ -1767,7 +1916,7 @@ These agents must not all share the main context.
 
 ---
 
-# 53. Auditor Agent and Behavioral Recurrence
+# 56. Auditor Agent and Behavioral Recurrence
 
 The auditor must search historical decisions for analogous behavior.
 
@@ -1802,7 +1951,7 @@ It must detect:
 
 ---
 
-# 54. Behavioral Pattern Representation
+# 57. Behavioral Pattern Representation
 
 A behavioral pattern should be independent from the exact event.
 
@@ -1832,7 +1981,7 @@ This pattern can later match:
 
 ---
 
-# 55. Contradiction Management
+# 58. Contradiction Management
 
 The graph and memory system must detect:
 
@@ -1865,7 +2014,7 @@ Possible statuses:
 
 ---
 
-# 56. Provenance
+# 59. Provenance
 
 Every important piece of knowledge must have provenance.
 
@@ -1892,7 +2041,7 @@ This is essential for auditing.
 
 ---
 
-# 57. State Machine
+# 60. State Machine
 
 High-level system states:
 
@@ -1915,7 +2064,7 @@ Transitions are controller-owned.
 
 ---
 
-# 58. Suggested Core Services
+# 61. Suggested Core Services
 
 Implement as modular services/interfaces:
 
@@ -1966,6 +2115,8 @@ Implement as modular services/interfaces:
     tools/
       tool_registry
       tool_discovery
+      skills
+      mcp_client
       browser
       web_research
       email
@@ -1978,16 +2129,54 @@ Implement as modular services/interfaces:
       human_interface
       ai_interface
       negotiation
+      deliberation
 
     security/
       vault
       authorization
+      guardrails
+      decision_supervisor
+      taint_tracker
+      compliance
       policy_engine
       secrets_manager
 
+    api/
+      rest
+      websocket
+      projections
+      commands
+
+    ui/
+      web_frontend
+
 ---
 
-# 59. Recommended Storage Architecture
+# 62. GUI and API Layer
+
+The frontend is a browser application, separated from the backend.
+
+Backend:
+
+- API-first: REST for commands and queries, WebSocket/SSE for live events;
+- every core component exposes its state and configuration through the API;
+- the GUI reads projections and writes commands; every manual change becomes an event with provenance human_edit;
+- authorization applies to GUI commands exactly as to system actions.
+
+Required views:
+
+1. Graph explorer: goals, targets, sub-targets, factors, resources, tools; typed relationships (support, required, enabler, blocker, antagonist, ...) with editable weights (importance, cost, probability, ...); every node opens a detail dialog (separate window, dialog or frame) where values can be edited by hand or discussed with the AI (see In-Progress Co-Decision).
+2. Guardrail editor: Tier 1 and Tier 2 guardrails with the full flexibility matrix.
+3. Goal definition: primary and secondary targets, priorities, motivations.
+4. Decision inbox: pending authorizations, supervisor verdicts, overrides.
+5. Configuration: LLM providers, tools, ports/adapters, skills, MCP servers, budgets, connectors.
+6. Journal, audit and budget dashboards.
+
+Every component must be observable and steerable through the GUI. A component without a GUI surface is incomplete.
+
+---
+
+# 63. Recommended Storage Architecture
 
 A practical first implementation can use:
 
@@ -1998,11 +2187,13 @@ A practical first implementation can use:
 - Redis for ephemeral queues/cache;
 - an event bus for asynchronous agents.
 
-The implementation may start with fewer technologies, but the logical separation must remain.
+The default first profile is a single PostgreSQL instance: structured state + event store + pgvector for embeddings + recursive CTEs or a graph extension for graph queries + SKIP LOCKED work queues. Additional engines are introduced only when scale demands, behind the same logical interfaces.
+
+The event store is canonical in every profile; the logical separation must remain.
 
 ---
 
-# 60. Minimum Data Entities
+# 64. Minimum Data Entities
 
 At minimum implement:
 
@@ -2031,10 +2222,17 @@ At minimum implement:
     Checkpoint
     Authorization
     Opportunity
+    Guardrail
+    SupervisorVerdict
+    Budget
+    Skill
+    McpServer
+    DeliberationThread
+    ContentTaint
 
 ---
 
-# 61. Event Types
+# 65. Event Types
 
 Suggested events:
 
@@ -2068,10 +2266,24 @@ Suggested events:
     HUMAN_ESCALATION
     AUTHORIZATION_GRANTED
     AUTHORIZATION_DENIED
+    GUARDRAIL_CREATED
+    GUARDRAIL_UPDATED
+    GUARDRAIL_TRIGGERED
+    SUPERVISOR_VERDICT
+    SUPERVISOR_OVERRIDE
+    HUMAN_EDIT
+    BUDGET_EXHAUSTED
+    INJECTION_SUSPECTED
+    SKILL_IMPORTED
+    SKILL_RETIRED
+    MCP_SERVER_REGISTERED
+    MCP_SERVER_DISABLED
+    DELIBERATION_OPENED
+    DELIBERATION_RESOLVED
 
 ---
 
-# 62. Failure Handling
+# 66. Failure Handling
 
 Every action needs explicit failure semantics.
 
@@ -2107,7 +2319,7 @@ For each failure:
 
 ---
 
-# 63. Preventing Infinite Loops
+# 67. Preventing Infinite Loops
 
 Autonomy requires termination and escalation criteria.
 
@@ -2129,9 +2341,11 @@ If no productive progress is possible:
     or
     search for a new strategy
 
+Loop budgets draw from the autonomy budgets defined in Human Authorization and Bounded Autonomy; exhaustion emits BUDGET_EXHAUSTED and suspends the affected goal pending human review.
+
 ---
 
-# 64. Anti-Drift Mechanisms
+# 68. Anti-Drift Mechanisms
 
 The system must continuously compare:
 
@@ -2153,7 +2367,7 @@ The controller must prevent a low-level task from becoming an accidental permane
 
 ---
 
-# 65. Goal Integrity
+# 69. Goal Integrity
 
 Persistent goals must have stronger governance than tasks.
 
@@ -2170,9 +2384,15 @@ The system should distinguish:
 
 These are not the same operation.
 
+Ratification rule: creation, modification, or deletion of meta-goals and persistent goals requires explicit human ratification — the system proposes, the human ratifies (enforced as a Tier 1 guardrail).
+
+Interpretation drift: when the system re-interprets the meaning of a persistent goal, the new interpretation is recorded as an event and periodically reviewed by the human.
+
+Corrigibility: PAUSE, STOP and ROLLBACK commands are honored unconditionally at controller level, never mediated by the LLM; no learned policy may create incentives to resist or delay a human override.
+
 ---
 
-# 66. Security Architecture
+# 70. Security Architecture
 
 Security must be external to the LLM.
 
@@ -2199,9 +2419,95 @@ The controller checks:
 
 Only then is the tool invoked.
 
+These checks are defined by the two-tier Guardrail System and enforced by the Decision Supervisor (see the following sections); the LLM never carries them.
+
 ---
 
-# 67. CAPTCHA Handling
+# 71. Two-Tier Guardrail System
+
+Security behavior is governed by guardrails in two tiers.
+
+Tier 1 — Constitution:
+
+- editable only manually by the human, through the GUI;
+- the system identity has no write permission at the storage/API level: a technical guarantee, not a convention;
+- versioned; every change is an event;
+- contains at minimum: goal-ratification rules, corrigibility rules (PAUSE / STOP / ROLLBACK), autonomy budgets, prohibited behavior classes.
+
+Tier 2 — Negotiated guardrails:
+
+- created by the AI/system (typically from audits, incidents or policy learning);
+- editable and discussable between human and machine (see In-Progress Co-Decision);
+- may never weaken a Tier 1 guardrail; Tier 1 wins every conflict;
+- asymmetric activation: a Tier 2 guardrail that RESTRICTS behavior may self-activate immediately; one that EXPANDS permitted behavior requires prior human approval.
+
+Guardrail structure (shares the policy schema, but lives in a distinct store and class):
+
+    guardrail_id
+    tier
+    description
+    behavior_reference        (blocked or allowed behavior)
+    flexibility_weight        (hard block | soft block | warn | advisory)
+    application_conditions
+    exclusions
+    exceptions
+    provenance
+    version
+    status
+
+All of it is manageable in the GUI.
+
+---
+
+# 72. Decision Supervisor
+
+A dedicated security component checks the AI's decisions at every level:
+
+    goal creation / modification
+    strategy selection
+    resource allocation
+    tool invocation
+    external communication
+    payments and irreversible actions
+
+This generalizes the authorization gateway: not only external actions — every significant decision receives a verdict.
+
+Evaluation inputs:
+
+    Tier 1 guardrails
+    Tier 2 guardrails
+    allowed/blocked behavior lists
+    flexibility matrix
+    autonomy budgets
+    risk class
+
+Verdicts:
+
+    GRANTED
+    DENIED
+    HUMAN_REQUIRED
+
+Every verdict is an auditable journal event. The human can override any verdict from the GUI, in both directions — approve a denied action, revoke a granted one. Overrides are themselves auditable events and feed the supervisor's own audit: where is it too strict, too permissive, and for which decision classes?
+
+---
+
+# 73. Prompt Injection Defense
+
+The system ingests external text continuously: web pages, emails, SMS, call transcripts, other AIs' messages, tool outputs, tool and skill descriptions. All of it is a potential attack channel.
+
+Doctrine: external content is data, never instructions.
+
+Mechanisms:
+
+1. Provenance tagging on every piece of ingested content.
+2. Structural separation of instructions and data in every prompt built by the LLM gateway.
+3. Taint tracking: a high-risk action proposed shortly after ingesting external content is treated as potentially injected and requires elevated authorization from the Decision Supervisor (event: INJECTION_SUSPECTED).
+4. Imported tool and skill descriptions are untrusted (description poisoning is a known attack on MCP-style ecosystems).
+5. Adversarial injection tests are part of the required test suite; resistance is measured, not assumed.
+
+---
+
+# 74. CAPTCHA Handling
 
 The browser subsystem must be flexible because CAPTCHA implementations vary.
 
@@ -2225,7 +2531,7 @@ Do not build the architecture around a single CAPTCHA provider or around brittle
 
 ---
 
-# 68. Payments, 2FA and Secrets: Context Isolation
+# 75. Payments, 2FA and Secrets: Context Isolation
 
 Sensitive information must remain outside normal reasoning context.
 
@@ -2244,7 +2550,20 @@ This greatly reduces leakage risk and makes auditing possible without storing se
 
 ---
 
-# 69. Human Escalation
+# 76. Compliance and Privacy
+
+External-world capabilities carry legal obligations. The architecture treats them as constraints enforced by guardrails, not as afterthoughts.
+
+1. AI disclosure: in voice interactions the system discloses that it is an AI (EU AI Act, Art. 50).
+2. Recording consent: per-jurisdiction rules resolved before recording or transcription.
+3. Personal data (GDPR): the Actor and Motivation models profile natural persons. This requires a lawful basis, data minimization, bounded retention, erasure on request, and no inference of sensitive categories.
+4. Honest identity: email, SMS and calls are sent as the system acting on behalf of its principal; impersonation is prohibited.
+5. Payments: strong customer authentication (PSD2/SCA) makes human-in-the-loop the normal case above thresholds; the design embraces it.
+6. No manipulation: inferred human motivations are never used to manipulate; influence must be transparent (arguments, offers, explicit requests).
+
+---
+
+# 77. Human Escalation
 
 Escalation is a normal cognitive operation, not an exception.
 
@@ -2270,9 +2589,23 @@ The agent should formulate:
 
 This minimizes human cognitive load.
 
+Escalation packets are delivered as deliberation threads in the GUI (see In-Progress Co-Decision): the same surface serves system-initiated escalations and human-initiated challenges.
+
 ---
 
-# 70. Social and Political Tools
+# 78. In-Progress Co-Decision (Deliberation)
+
+Human-AI discussion is a first-class runtime mechanism, not an exception path.
+
+- The human can open any decision, strategy or graph node at any moment and rediscuss it.
+- The system answers with the reconstructed rationale from the journal: evidence, alternatives considered, estimates, applied policies.
+- The outcome — confirm, modify, cancel — is an event and can trigger replanning.
+- The mechanism is bidirectional: escalation packets (see Human Escalation) become deliberation threads in the same GUI.
+- Deliberations are stored as episodes and feed auditing and policy learning.
+
+---
+
+# 79. Social and Political Tools
 
 The architecture must treat social/organizational/political mechanisms as possible tools in the abstract sense.
 
@@ -2300,7 +2633,7 @@ The system should evaluate them exactly like technical tools:
 
 ---
 
-# 71. Tool Discovery as a Continuous Process
+# 80. Tool Discovery as a Continuous Process
 
 Tool discovery should run in the background.
 
@@ -2334,7 +2667,7 @@ This is capability expansion.
 
 ---
 
-# 72. Skill Acquisition
+# 81. Skill Acquisition
 
 A repeatedly successful sequence should be promoted into a reusable skill.
 
@@ -2363,7 +2696,37 @@ Skills should contain:
 
 ---
 
-# 73. Architecture of a Single Decision Cycle
+# 82. Imported Skills and MCP Servers
+
+Capabilities must be importable as packaged extensions, in the manner of modern agent runtimes (e.g., Claude Code, Hermes).
+
+Skill packages:
+
+- self-contained procedural knowledge: manifest (name, description, applicability triggers, risk class, version, provenance) + instructions + optional scripts/resources;
+- imported skills register into procedural/policy memory with provenance imported (distinct from skills learned through Skill Acquisition);
+- loaded on demand (progressive disclosure) to respect context budgets.
+
+MCP servers (Model Context Protocol):
+
+- the tool registry acts as an MCP client;
+- on import: enumerate the server's tools and resources -> map them into Tool Graph nodes with schemas and cost/latency/reliability estimates -> assign risk classes -> run conformance tests in sandbox -> register;
+- an MCP server is one adapter type behind the tool ports.
+
+Security (applies to both):
+
+- sandbox-first execution; provenance verification; least-privilege credentials per integration;
+- promotion to risk class EXTERNAL_COMMUNICATION or higher requires human approval through the Decision Supervisor;
+- descriptions and outputs are untrusted content (see Prompt Injection Defense);
+- versions are pinned; an update re-triggers validation.
+
+Management:
+
+- import, enable/disable, inspect and permission skills and MCP servers from the configuration GUI;
+- tool discovery includes skill/MCP registries as first-class acquisition channels.
+
+---
+
+# 83. Architecture of a Single Decision Cycle
 
 For every important decision:
 
@@ -2395,7 +2758,7 @@ For every important decision:
 
 ---
 
-# 74. Continuous Background Processes
+# 84. Continuous Background Processes
 
 Recommended background workers:
 
@@ -2414,7 +2777,20 @@ These workers should operate independently from the main execution loop.
 
 ---
 
-# 75. Implementation Phases
+# 85. Implementation Phases
+
+Phases are vertical slices: each phase must end with the complete loop running on a richer scenario than the previous one, with an executable acceptance scenario and its GUI slice. Never build horizontal infrastructure without closing the loop.
+
+## Phase 0 — Minimum Viable Loop
+
+Implement the complete loop end-to-end on a toy domain:
+
+    goal -> reconciliation -> planning -> action (2 tools)
+         -> verification -> journal -> audit -> policy candidate
+
+Single process; single PostgreSQL; API-first backend with a minimal GUI (graph viewer + decision inbox); minimal Tier 1 guardrails and Decision Supervisor.
+
+Goal: the loop closes, and every later phase grows a working system.
 
 ## Phase 1 — Core engine
 
@@ -2512,7 +2888,7 @@ Goal: long-horizon autonomous operation.
 
 ---
 
-# 76. Acceptance Criteria
+# 86. Acceptance Criteria
 
 The system is not considered complete merely because it can execute tasks.
 
@@ -2568,7 +2944,7 @@ It can continue working toward a goal without being handed a new task at every s
 
 ---
 
-# 77. What This System Is Not
+# 87. What This System Is Not
 
 It is not:
 
@@ -2585,7 +2961,7 @@ Those components may exist inside the system, but they are not the architecture.
 
 ---
 
-# 78. Target Architectural Property
+# 88. Target Architectural Property
 
 The desired behavior is:
 
@@ -2612,7 +2988,7 @@ That behavioral loop is the target.
 
 ---
 
-# 79. Final Architectural Definition
+# 89. Final Architectural Definition
 
 The complete system can be described as:
 
@@ -2676,7 +3052,7 @@ The defining property is not merely intelligence at one inference step, but the 
 
 ---
 
-# 80. Immediate Cloud Code Deliverables
+# 90. Immediate Cloud Code Deliverables
 
 Cloud Code should implement the project in this order:
 
@@ -2710,10 +3086,18 @@ Cloud Code should implement the project in this order:
 28. Implement observability, metrics and replay.
 29. Implement long-running autonomous test scenarios.
 30. Validate against the acceptance criteria above.
+31. Implement the two-tier guardrail system (Tier 1 storage-enforced).
+32. Implement the Decision Supervisor with GUI override.
+33. Implement the API layer and web GUI (graph explorer, guardrail editor, decision inbox, configuration, dashboards).
+34. Implement deliberation threads (in-progress co-decision).
+35. Implement skill-package import and the MCP client integration.
+36. Implement the compliance layer (AI disclosure, consent, personal-data handling for actor/motivation models).
+
+The numbered list is the component inventory, not the build order: execution follows the phase plan (Phase 0 first, then vertical slices).
 
 ---
 
-# 81. Non-Negotiable Design Decisions
+# 91. Non-Negotiable Design Decisions
 
 The following decisions should not be silently changed during implementation:
 
@@ -2742,12 +3126,28 @@ The following decisions should not be silently changed during implementation:
 23. Payments must use secure handles/vaults rather than raw credentials.
 24. Every meaningful external action must produce an auditable event.
 25. The controller, not the LLM, owns lifecycle, permissions and state transitions.
+26. Meta-goals and persistent goals are created, modified or deleted only with explicit human ratification; the system proposes.
+27. PAUSE, STOP and ROLLBACK are honored unconditionally at controller level; no learned policy may create incentives to resist or delay human override.
+28. External content (web, email, transcripts, other AIs, tool and skill descriptions) is data, never instructions; high-impact actions influenced by recently ingested external content require elevated authorization.
+29. Autonomy budgets are hard-enforced by the controller and expand only by human decision (ratchet), never through learning.
+30. Tier 1 guardrails are technically non-writable by the system identity; Tier 2 guardrails may self-activate only in the restrictive direction — permissive changes require prior human approval.
+31. Every significant decision passes the Decision Supervisor and produces an auditable verdict event; human override is always available via GUI, in both directions.
+32. All writes flow through the event store (single source of truth); any decision must be reconstructable via deterministic replay (events + logged LLM I/O).
+33. Every external integration (LLM providers, browser, vault, voice, email/SMS, skills, MCP servers) sits behind a typed port with substitutable adapters, sandbox-first validation and conformance tests.
 
 ---
 
-# 82. Definition of Done
+# 92. Definition of Done
 
-The project is complete when a persistent goal can be supplied and the system can autonomously:
+The list below is the north star, not a completion gate. Progress is tracked against verifiable milestones, each of independent value:
+
+    M0  Phase 0 loop closed on a toy domain
+    M1  persistent multi-goal operation with guardrails, supervisor and GUI on simulated scenarios
+    M2  memory and learning measurably reduce repeated errors (error-recurrence metric)
+    M3  tool/skill/MCP acquisition works end-to-end under sandbox policy
+    M4  long-horizon autonomous operation with human oversight in production domains
+
+The north star: the project approaches completion when a persistent goal can be supplied and the system can autonomously:
 
 - understand the goal and its motivation;
 - construct a dynamic goal/factor/resource/tool graph;
@@ -2773,3 +3173,77 @@ The project is complete when a persistent goal can be supplied and the system ca
 - continue operating over long time horizons without requiring a new human prompt for every step.
 
 The system should be judged primarily by **long-horizon autonomous goal achievement, adaptability, calibration, learning from experience, and quality of strategic decisions**, not by isolated benchmark performance of the underlying LLM.
+---
+
+# Appendix A. Canonical Schema (Normative)
+
+This appendix is the single normative definition shared by the three PGDCA documents (paper, design rationale, implementation specification). Where any section or document diverges, this appendix wins.
+
+## A.1 Relationship attributes
+
+    relationship_id
+    source_node
+    target_node
+    relationship_type
+    direction
+    strength
+    importance
+    utility
+    cost
+    probability
+    confidence
+    risk
+    substitutability
+    reversibility
+    latency
+    duration
+    dependencies
+    side_effects
+    causal_evidence
+    validation_status      (HYPOTHESIZED | OBSERVED | VALIDATED)
+    provenance
+    created_at
+    updated_at
+    validity_status        (lifecycle: active | deferred | invalidated | superseded)
+
+## A.2 Relationship types
+
+    SUPPORT       increases the probability or quality of the target
+    ENABLE        makes the target possible (weaker than REQUIRED)
+    REQUIRED      the target cannot be achieved without it
+    BLOCK         prevents progress while present
+    INHIBIT       reduces strength or probability without preventing
+    RISK          introduces potential downside
+    ANTAGONIZE    helps one goal while harming another
+    DEPENDS_ON    ordering / prerequisite dependency
+    SUBSTITUTES   can provide the same function as another node
+    AMPLIFIES     increases the effect of another relationship or factor
+    MITIGATES     reduces a risk or a negative effect
+    CAUSES        causal production of an effect
+    CORRELATES    statistical association without established causation
+    DERIVES_FROM  provenance / derivation link
+    INVALIDATES   renders another node or assumption invalid
+    SUPERSEDES    replaces another node, strategy or policy
+
+Deprecated aliases: ENABLES -> ENABLE, OBSTRUCT -> BLOCK.
+
+## A.3 Canonical decision-value function
+
+    U(a) = sum_i [ w_i * p_i(a) * dV_i(a) ]
+           - C(a) - R(a) - OC(a)
+           + IG(a) + CG(a)
+
+    w_i     = current priority of goal i
+    p_i(a)  = probability that a produces its expected impact on goal i
+    dV_i(a) = expected marginal contribution of a to goal i
+    C(a)    = direct cost
+    R(a)    = risk-adjusted cost
+    OC(a)   = opportunity cost
+    IG(a)   = expected information gain
+    CG(a)   = expected capability gain
+
+The linear-additive form is a configurable default, not a theoretical commitment; alternative aggregations (non-additive interactions, risk attitudes) may replace it per domain. The stated precision of U(a) must never exceed the precision of its inputs.
+
+## A.4 Phase plan
+
+The normative implementation plan is the Implementation Phases section of this specification (Phase 0 upward, vertical slices). The paper's research program and the rationale's implementation dependency order are descriptive and defer to it.

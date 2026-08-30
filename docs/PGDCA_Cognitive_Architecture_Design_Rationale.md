@@ -2,7 +2,9 @@
 
 **Persistent Goal-Directed Cognitive Architecture (PGDCA)**  
 **Design Rationale, Architectural Genesis and Implementation Context**  
-Version 1.0 — 30 August 2026
+Version 1.1 — 30 August 2026
+
+> Revision 1.1 applies the approved modifications recorded in `ANALISI_E_PROPOSTE.md` (goal governance, injection defense, bounded autonomy, two-tier guardrails, decision supervisor, GUI, interface-first tooling, imported skills/MCP, vertical-slice phasing). Section numbering shifted with the inserted sections.
 
 ---
 
@@ -319,6 +321,8 @@ Certification sub-goal should be removed.
 ```
 
 The system must therefore continuously verify whether every node is still justified by its parent objective.
+
+The seven levels are semantic roles, not mandatory layers: hierarchies have variable depth, and a simple goal does not need seven bureaucratic strata. What matters is the role semantics — stability decreasing and disposability increasing downward.
 
 ---
 
@@ -648,6 +652,8 @@ An action may:
 - alter another goal.
 
 The graph engine must evaluate relevant downstream effects.
+
+Propagation needs guardrails: causal edges carry a validation status (hypothesized / observed / validated), propagation depth is bounded by default, uncertainty compounds multiplicatively along a path, and a high-impact decision must never rest on an unvalidated multi-hop chain — validate the weakest link first, or escalate.
 
 ---
 
@@ -1457,9 +1463,124 @@ Policy
 
 This is important because real-world cooperation frequently crosses the boundary between software and humans.
 
+Integration is interface-first: only the port and a mock are built initially; the existing application connects later as an adapter (with a bridge where the APIs do not match).
+
 ---
 
-# 42. Deterministic Controller
+# 42. Two-Tier Guardrails and the Human Constitution
+
+PGDCA continuously rewrites its own sub-goals, strategies and policies. That is the point of the architecture — and precisely why there must be a layer of behavioral rules the system cannot rewrite.
+
+Guardrails therefore exist in two tiers.
+
+### Tier 1 — the Constitution
+
+- Editable only manually, by the human, through the GUI.
+- The system identity has no write permission at the storage/API level. This is a technical guarantee, not a convention or a prompt instruction.
+- Versioned; every change is an event.
+- Contains at minimum: goal-ratification rules, corrigibility rules (PAUSE / STOP / ROLLBACK are honored unconditionally at controller level), autonomy budgets, prohibited behavior classes.
+
+### Tier 2 — negotiated guardrails
+
+- Created by the AI/system itself, typically from audits, incidents, or policy learning.
+- Editable and discussable between human and machine.
+- Never able to weaken a Tier 1 rule: Tier 1 wins every conflict.
+- Activation is asymmetric: a Tier 2 guardrail that restricts behavior may self-activate immediately; one that expands permitted behavior requires prior human approval.
+
+The asymmetry has a simple rationale: self-restriction is safe by construction; self-permission is not.
+
+Every guardrail carries an application matrix — flexibility weight (hard block / soft block / warn / advisory), application conditions, exclusions, exceptions — all manageable in the GUI.
+
+---
+
+# 43. The Decision Supervisor
+
+Authorization must not stop at external actions.
+
+A goal modification, a strategy switch, or a resource reallocation can be as consequential as an outbound payment. PGDCA therefore includes a dedicated security component — the Decision Supervisor — that issues a verdict on every significant decision, at every level:
+
+```text
+goal creation / modification
+strategy selection
+resource allocation
+tool invocation
+external communication
+payments and irreversible actions
+```
+
+The supervisor evaluates decisions against Tier 1 guardrails, Tier 2 guardrails, allowed/blocked behavior lists with their flexibility matrix, and the autonomy budgets.
+
+Verdicts are GRANTED, DENIED, or HUMAN_REQUIRED. Every verdict is an auditable event.
+
+The human can override any verdict from the GUI, in both directions: approve what was denied, revoke what was granted. Overrides are themselves events — and they audit the auditor: recurring overrides reveal where the supervisor is too strict or too permissive, and for which classes of decision.
+
+---
+
+# 44. External Content Is Data, Never Instructions
+
+PGDCA reads web pages, emails, SMS, call transcripts, other AIs' messages, tool outputs and tool descriptions. Every one of these channels can carry adversarial text.
+
+A system that combines private state, continuous ingestion of untrusted content, and the ability to communicate and pay externally is the worst-case target for indirect prompt injection. PGDCA combines all three by design.
+
+The doctrine is therefore architectural, not optional:
+
+- external content is data, never instructions;
+- every ingested item carries provenance;
+- prompts separate instructions from data structurally;
+- a high-impact action proposed shortly after ingesting external content is treated as tainted and requires elevated authorization;
+- imported tool and skill descriptions are untrusted (description poisoning);
+- injection resistance is tested adversarially, not assumed.
+
+---
+
+# 45. Bounded, Earned Autonomy
+
+Autonomy is not a switch; it is a budget.
+
+The controller enforces hard ceilings per time window — spend, external communications, irreversible actions, compute per goal — defined in Tier 1 guardrails.
+
+Two rules govern their evolution:
+
+- **Ratchet**: budgets expand only by explicit human decision. Policy learning can propose, never enact, an expansion.
+- **Apprenticeship**: escalation thresholds start high and relax per domain only as measured calibration accumulates. A new system, like a new employee, earns trust with evidence.
+
+The cold-start corollary: the learning machinery is empty exactly when the system is most error-prone. Seed policies, sandbox curricula and apprentice mode exist to survive that phase.
+
+---
+
+# 46. The GUI as a Cognitive Interface
+
+In PGDCA the GUI is not an accessory; it is where human and system share one model of the world.
+
+- The frontend runs in the browser, separated from the API-first backend.
+- Every component exposes its state and configuration: a component without a GUI surface is incomplete.
+- The goal/factor graph is visual: nodes, typed relationships (support, required, enabler, blocker, antagonist, ...) and weights (importance, cost, probability, ...) can be inspected, edited by hand, or discussed with the AI in the node's detail dialog.
+- Guardrails, targets, budgets, configuration, journal and audits each have their view.
+- Every manual edit becomes an event with provenance human_edit — human intervention is part of the system's history, not outside it.
+- Deliberation is bidirectional: the human can reopen any decision and challenge it; the system answers with the reconstructed rationale from the journal, and escalation packets arrive as discussion threads in the same interface. The outcomes are episodes that feed auditing and policy learning.
+
+---
+
+# 47. Interface-First Tooling, Skills and MCP
+
+Every external integration is a port: a typed contract owned by the architecture, with substitutable adapters behind it.
+
+The reasons:
+
+- provider choices must be reversible (browser engines, LLM providers, vaults);
+- existing applications integrate later without touching the core: the voice subsystem ships as port + mock first, and the existing calling application connects as an adapter; the existing LLM provider library connects as an adapter to the LLM gateway;
+- mocks and conformance tests make every integration testable before it is trusted.
+
+Capabilities are also importable as packages, in the manner of modern agent runtimes (e.g., Claude Code, Hermes):
+
+- **Skill packages**: self-contained procedural knowledge (manifest, instructions, optional scripts), registered as imported procedural memory and loaded on demand;
+- **MCP servers**: the tool registry acts as a Model Context Protocol client; imported tools enter the Tool Graph with schemas, risk classes, sandbox validation and pinned versions.
+
+Imported capability is still untrusted capability: sandbox-first execution, provenance verification, least-privilege credentials, and human approval before promotion to externally-visible risk classes.
+
+---
+
+# 48. Deterministic Controller
 
 The controller is the architectural core.
 
@@ -1482,7 +1603,7 @@ The LLM does not own the system lifecycle.
 
 ---
 
-# 43. What "Deterministic" Means
+# 49. What "Deterministic" Means
 
 Deterministic does **not** mean:
 
@@ -1516,7 +1637,7 @@ These rules are architectural invariants.
 
 ---
 
-# 44. LLM as Generative Substrate
+# 50. LLM as Generative Substrate
 
 The LLM should be used where generation is valuable.
 
@@ -1544,7 +1665,7 @@ Probabilistic generative cognition
 
 ---
 
-# 45. Cognitive Loop
+# 51. Cognitive Loop
 
 The canonical loop is:
 
@@ -1600,7 +1721,7 @@ There is no requirement that it terminate after a single task.
 
 ---
 
-# 46. Strategy Branching
+# 52. Strategy Branching
 
 The system should not generate one plan and commit immediately.
 
@@ -1637,7 +1758,7 @@ Branches can then be:
 
 ---
 
-# 47. Branch Pruning
+# 53. Branch Pruning
 
 Infinite branching is computationally impossible.
 
@@ -1658,7 +1779,7 @@ However, pruning should preserve strategically different alternatives when uncer
 
 ---
 
-# 48. Goal Arbitration Must Be Global
+# 54. Goal Arbitration Must Be Global
 
 A local planner can say:
 
@@ -1674,7 +1795,7 @@ A strategy that is optimal locally may be globally irrational.
 
 ---
 
-# 49. Resource Allocation
+# 55. Resource Allocation
 
 Resources should be represented explicitly.
 
@@ -1697,7 +1818,7 @@ Resources are fungible only where the domain permits.
 
 ---
 
-# 50. Scaling Down Goals
+# 56. Scaling Down Goals
 
 Not every goal must be binary.
 
@@ -1721,7 +1842,7 @@ This allows the architecture to optimize under constraints rather than simply de
 
 ---
 
-# 51. Opportunity Discovery
+# 57. Opportunity Discovery
 
 A persistent agent should continuously look for opportunities.
 
@@ -1751,7 +1872,7 @@ An opportunity is itself a graph node with:
 
 ---
 
-# 52. Goal Expiration
+# 58. Goal Expiration
 
 Goals and opportunities can become obsolete.
 
@@ -1768,7 +1889,7 @@ The system should automatically re-evaluate stale objectives.
 
 ---
 
-# 53. Temporal Reasoning
+# 59. Temporal Reasoning
 
 Time must be represented explicitly.
 
@@ -1786,7 +1907,7 @@ A strategy that is optimal today may be useless tomorrow.
 
 ---
 
-# 54. Audit as a Learning Mechanism
+# 60. Audit as a Learning Mechanism
 
 Auditing is not only for detecting failure.
 
@@ -1812,7 +1933,7 @@ Without this loop, the system repeatedly solves problems from scratch.
 
 ---
 
-# 55. Error Taxonomy
+# 61. Error Taxonomy
 
 Audits should classify errors.
 
@@ -1840,7 +1961,7 @@ Different errors require different corrections.
 
 ---
 
-# 56. Policy Confidence
+# 62. Policy Confidence
 
 Policies should have confidence.
 
@@ -1868,7 +1989,7 @@ Policies should never become unconditional rules unless justified.
 
 ---
 
-# 57. Provenance
+# 63. Provenance
 
 Every important belief should have provenance.
 
@@ -1887,7 +2008,7 @@ This allows the system to distinguish evidence from speculation.
 
 ---
 
-# 58. Confidence Is Not Truth
+# 64. Confidence Is Not Truth
 
 Confidence represents the system's current belief state.
 
@@ -1903,7 +2024,7 @@ Calibration matters more than subjective certainty.
 
 ---
 
-# 59. Self-Correction
+# 65. Self-Correction
 
 Self-correction should operate at multiple levels.
 
@@ -1927,7 +2048,7 @@ The last level should require stronger evidence and preferably controlled experi
 
 ---
 
-# 60. Architecture Must Not Become Self-Modifying Chaos
+# 66. Architecture Must Not Become Self-Modifying Chaos
 
 The system should distinguish:
 
@@ -1945,7 +2066,7 @@ The system should never silently mutate its own core execution semantics merely 
 
 ---
 
-# 61. Cognitive Version Control
+# 67. Cognitive Version Control
 
 Important cognitive artifacts should be versioned:
 
@@ -1964,7 +2085,7 @@ This is required for meaningful retrospective auditing.
 
 ---
 
-# 62. Why the Graph and Vector Store Must Coexist
+# 68. Why the Graph and Vector Store Must Coexist
 
 Vector search answers:
 
@@ -1994,7 +2115,7 @@ compact context
 
 ---
 
-# 63. Why a Pure Task Tree Fails
+# 69. Why a Pure Task Tree Fails
 
 A task tree assumes:
 
@@ -2030,7 +2151,7 @@ The system therefore needs a graph.
 
 ---
 
-# 64. Why a Pure Planner Fails
+# 70. Why a Pure Planner Fails
 
 A planner assumes that the goal and environment are sufficiently stable.
 
@@ -2054,7 +2175,7 @@ Planning is a recurring activity rather than a one-time activity.
 
 ---
 
-# 65. Why Memory Alone Fails
+# 71. Why Memory Alone Fails
 
 A system can remember thousands of events and still learn nothing.
 
@@ -2087,7 +2208,7 @@ future avoidance
 
 ---
 
-# 66. Why Reflection Alone Fails
+# 72. Why Reflection Alone Fails
 
 A model can reflect on an answer but forget the reflection later.
 
@@ -2105,7 +2226,7 @@ Reflection becomes useful only when integrated with memory and future decision-m
 
 ---
 
-# 67. Why Tool Use Alone Fails
+# 73. Why Tool Use Alone Fails
 
 Tool use increases capability but does not create persistent agency.
 
@@ -2122,7 +2243,7 @@ Tool use must therefore be integrated with the goal graph and policy system.
 
 ---
 
-# 68. Why Human Interaction Is a Capability
+# 74. Why Human Interaction Is a Capability
 
 Humans are not merely users.
 
@@ -2139,7 +2260,7 @@ Therefore human interaction should be represented as a tool/capability class.
 
 ---
 
-# 69. Why Motivation Matters
+# 75. Why Motivation Matters
 
 Without reasons, the system cannot properly arbitrate conflicting objectives.
 
@@ -2171,7 +2292,7 @@ is important.
 
 ---
 
-# 70. The Ultimate Goal Must Be Rechecked
+# 76. The Ultimate Goal Must Be Rechecked
 
 The system must periodically ask:
 
@@ -2187,7 +2308,7 @@ Goal validation therefore exists above planning.
 
 ---
 
-# 71. The System as a Closed-Loop Cognitive Controller
+# 77. The System as a Closed-Loop Cognitive Controller
 
 The complete conceptual model is:
 
@@ -2243,7 +2364,7 @@ The complete conceptual model is:
 
 ---
 
-# 72. Architectural Principles
+# 78. Architectural Principles
 
 The following principles are mandatory.
 
@@ -2319,53 +2440,77 @@ They are part of the environment and capability graph.
 
 The model must not have unrestricted execution authority.
 
+## Principle 19 — Purpose is human-ratified
+
+Meta-goals and persistent goals are created, modified or deleted only with explicit human ratification; the system proposes, the human ratifies.
+
+## Principle 20 — External content is data, never instructions
+
+Everything ingested from outside carries provenance and can never redirect the system's behavior directly.
+
+## Principle 21 — Autonomy is budgeted and earned
+
+Hard budgets, expanded only by human decision; escalation thresholds relax only as measured calibration accumulates.
+
+## Principle 22 — The constitution is technically inviolable
+
+Tier 1 guardrails are not writable by the system identity; Tier 2 guardrails never weaken Tier 1 and self-activate only in the restrictive direction.
+
+## Principle 23 — Every component is observable and steerable
+
+State, configuration and decisions are exposed through the GUI; human edits are events in the system's history.
+
+## Principle 24 — Durable complements over erodible substitutes
+
+Distinguish functions a model can never supply (persistence, authority, audit, budgets, actuation, provenance) from scaffolds that compensate current model weaknesses; keep the latter behind ports and cheap to remove.
+
 ---
 
-# 73. Architectural Decisions We Deliberately Reject
+# 79. Architectural Decisions We Deliberately Reject
 
-## 73.1 No Simple Task Tree
+## 79.1 No Simple Task Tree
 
 Because goals interact globally.
 
-## 73.2 No Universal Vector Database
+## 79.2 No Universal Vector Database
 
 Because semantic similarity is not structured state.
 
-## 73.3 No LLM-Owned Lifecycle
+## 79.3 No LLM-Owned Lifecycle
 
 Because probabilistic generation should not control persistent system semantics.
 
-## 73.4 No Permanent Sub-Goals
+## 79.4 No Permanent Sub-Goals
 
 Because environmental changes invalidate plans.
 
-## 73.5 No Outcome-Only Learning
+## 79.5 No Outcome-Only Learning
 
 Because luck and external events distort outcome interpretation.
 
-## 73.6 No Episodic-Only Memory
+## 79.6 No Episodic-Only Memory
 
 Because repeated experience must become policy.
 
-## 73.7 No Single-Goal Optimization
+## 79.7 No Single-Goal Optimization
 
 Because goals can antagonize each other.
 
-## 73.8 No Tool List Without Capability Semantics
+## 79.8 No Tool List Without Capability Semantics
 
 Because tools exist to satisfy capability requirements.
 
-## 73.9 No Unrestricted External Action
+## 79.9 No Unrestricted External Action
 
 Because authorization must be separated from generation.
 
-## 73.10 No Blind Self-Modification
+## 79.10 No Blind Self-Modification
 
 Because architectural changes require validation and versioning.
 
 ---
 
-# 74. Component-to-Rationale Matrix
+# 80. Component-to-Rationale Matrix
 
 | Problem | Deduction | Mechanism | Component |
 |---|---|---|---|
@@ -2388,9 +2533,15 @@ Because architectural changes require validation and versioning.
 
 ---
 
-# 75. Implementation Dependency Order
+# 81. Implementation Dependency Order
 
 Implementation should proceed from persistence and control toward autonomy.
+
+Phases are vertical slices: each phase must end with the complete loop running on a richer scenario than the previous one, with an executable acceptance scenario and its GUI slice. Never build horizontal infrastructure without closing the loop.
+
+## Phase 0 — Minimum Viable Loop
+
+0. Complete loop on a toy domain: goal → reconciliation → planning → action (2 tools) → verification → journal → audit → policy candidate — single process, single PostgreSQL, API-first backend with a minimal GUI (graph viewer + decision inbox), minimal Tier 1 guardrails and Decision Supervisor.
 
 ## Phase 1 — Cognitive Substrate
 
@@ -2450,7 +2601,7 @@ Implementation should proceed from persistence and control toward autonomy.
 
 ---
 
-# 76. Definition of a Correct Implementation
+# 82. Definition of a Correct Implementation
 
 A component is not complete merely because its API works.
 
@@ -2470,7 +2621,7 @@ The implementation must preserve the underlying reasoning.
 
 ---
 
-# 77. Required Tests
+# 83. Required Tests
 
 Testing should include unit, integration, simulation and long-horizon cognitive tests.
 
@@ -2524,6 +2675,14 @@ Testing should include unit, integration, simulation and long-horizon cognitive 
 - tool validation;
 - failure recovery.
 
+## Security Tests
+
+- injection resistance (adversarial content in web pages, emails, transcripts, tool and skill descriptions);
+- Tier 1 immutability from the system identity;
+- supervisor verdicts and human override in both directions;
+- budget enforcement and ratchet;
+- STOP/PAUSE/ROLLBACK honored under load.
+
 ## Long-Horizon Tests
 
 - changing goals;
@@ -2535,7 +2694,7 @@ Testing should include unit, integration, simulation and long-horizon cognitive 
 
 ---
 
-# 78. The Most Important Acceptance Test
+# 84. The Most Important Acceptance Test
 
 A particularly important experiment should be:
 
@@ -2574,7 +2733,7 @@ This is a much more meaningful AGI-oriented test than a single benchmark questio
 
 ---
 
-# 79. The AGI Hypothesis
+# 85. The AGI Hypothesis
 
 The project's AGI hypothesis can be stated formally:
 
@@ -2586,7 +2745,7 @@ It should be tested experimentally.
 
 ---
 
-# 80. Expected Transition
+# 86. Expected Transition
 
 The conceptual progression is:
 
@@ -2620,7 +2779,7 @@ Autonomous General Intelligence
 
 ---
 
-# 81. AGI and SGI
+# 87. AGI and SGI
 
 For this project:
 
@@ -2655,7 +2814,7 @@ It is defined by integrated system capability.
 
 ---
 
-# 82. Why Capability Acquisition Is Particularly Important
+# 88. Why Capability Acquisition Is Particularly Important
 
 A powerful system does not need to already possess every skill.
 
@@ -2683,7 +2842,7 @@ This may become one of the most important differentiators between AGI and narrow
 
 ---
 
-# 83. Why the Architecture May Matter More as Models Improve
+# 89. Why the Architecture May Matter More as Models Improve
 
 When model competence is low:
 
@@ -2717,9 +2876,11 @@ This produces the project's key architectural prediction:
 
 This must be tested rather than assumed.
 
+A refinement sharpens the prediction: architectural functions divide into **durable complements** (persistence, authority, audit, budgets, actuation, provenance — which no model can supply by definition, and whose value grows with autonomy) and **erodible substitutes** (scaffolds compensating current model weaknesses, which better models will absorb). The architecture keeps substitutes behind ports and cheap to remove; the erosion of the substitute class is itself a testable prediction.
+
 ---
 
-# 84. Research Strategy
+# 90. Research Strategy
 
 The strongest experimental approach is an ablation study.
 
@@ -2767,7 +2928,7 @@ Otherwise architectural gains may be confused with simply spending more tokens.
 
 ---
 
-# 85. Important Warning for Implementation Agents
+# 91. Important Warning for Implementation Agents
 
 Claude Code must not interpret this architecture as a request to create a collection of independent "AI agents" that simply call each other.
 
@@ -2781,7 +2942,7 @@ The deterministic controller remains the coordinator.
 
 ---
 
-# 86. What Claude Code Should Ask When Making an Architectural Decision
+# 92. What Claude Code Should Ask When Making an Architectural Decision
 
 Whenever an implementation choice is ambiguous, evaluate it against these questions:
 
@@ -2800,12 +2961,15 @@ Whenever an implementation choice is ambiguous, evaluate it against these questi
 13. Can the system explain why a decision was made?
 14. Can the system determine whether the decision was good independently of outcome?
 15. Does the architecture preserve deterministic authority?
+16. Does external content remain data rather than instructions?
+17. Can the human inspect and override this decision via the GUI?
+18. Is every external integration behind a typed port with a mock and conformance tests?
 
 If an implementation makes one of these impossible, it should be reconsidered.
 
 ---
 
-# 87. Final Architectural Mental Model
+# 93. Final Architectural Mental Model
 
 The correct mental model for PGDCA is not:
 
@@ -2874,7 +3038,7 @@ It exists in the **closed-loop system**.
 
 ---
 
-# 88. Final Design Principle
+# 94. Final Design Principle
 
 The entire project can be compressed into one principle:
 
