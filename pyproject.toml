@@ -20,3 +20,7 @@ include = ["pgdca*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# `tests.conftest` and `examples.*` import as top-level packages: keep the
+# repo root on sys.path even when pytest runs as a console script (the bare
+# `pytest` command does not add the cwd the way `python -m pytest` does)
+pythonpath = ["."]
