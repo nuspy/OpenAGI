@@ -31,6 +31,14 @@ def _actor(header_value: str | None) -> Actor:
         raise HTTPException(400, f"unknown actor '{v}'")
 
 
+def _note(body: dict, x_user: str | None) -> str:
+    """Operator identity: the X-User name is stamped into the human
+    note so the journal records who decided, not just that a human did."""
+    note = str(body.get("note", ""))
+    user = (x_user or "").strip()
+    return f"{note} [by {user}]".strip() if user else note
+
+
 def create_app(ctrl: Controller) -> FastAPI:
     app = FastAPI(title="PGDCA Phase 0", version="0.1.0")
 
@@ -285,21 +293,35 @@ def create_app(ctrl: Controller) -> FastAPI:
 
     @app.post("/api/pending/resolve")
     def resolve(body: dict = Body(...),
-                x_actor: str | None = Header(default=None)):
+                x_actor: str | None = Header(default=None),
+                x_user: str | None = Header(default=None)):
         actor = _actor(x_actor)
         if actor != Actor.HUMAN:
             raise HTTPException(403, "pending decisions are resolved by the human")
-        r = ctrl.resolve_pending(bool(body.get("approve")), body.get("note", ""))
+        r = ctrl.resolve_pending(bool(body.get("approve")), _note(body, x_user))
         return {"result": r.__dict__ if r else None, "state": ctrl.state.value}
 
     @app.post("/api/verdicts/{verdict_id}/override")
     def override(verdict_id: str, body: dict = Body(...),
-                 x_actor: str | None = Header(default=None)):
+                 x_actor: str | None = Header(default=None),
+                 x_user: str | None = Header(default=None)):
         actor = _actor(x_actor)
         if actor != Actor.HUMAN:
             raise HTTPException(403, "overrides belong to the human identity")
         return guard(lambda: ctrl.override_verdict(
-            verdict_id, bool(body.get("approve")), body.get("note", "")))
+            verdict_id, bool(body.get("approve")), _note(body, x_user)))
+
+    # ------------------------------------------------------ configuration
+    @app.get("/api/config")
+    def get_config():
+        import dataclasses
+        return dataclasses.asdict(ctrl.config)
+
+    @app.post("/api/config")
+    def set_config(body: dict = Body(...),
+                   x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.update_config(
+            body.get("changes", {}), _actor(x_actor)))
 
     # --------------------------------------------------------------- SSE
     @app.get("/api/events/stream")

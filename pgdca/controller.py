@@ -158,6 +158,10 @@ class Controller:
                 last_cycle = max(last_cycle, int(ev.payload.get("cycle", 0)))
             elif ev.type == Ev.CONTROL_COMMAND.value:
                 last_control = ev.payload.get("command")
+            elif ev.type == Ev.CONFIG_UPDATED.value:
+                for k, v in ev.payload.get("changes", {}).items():
+                    if hasattr(self.config, k):
+                        setattr(self.config, k, v)
             elif ev.type == Ev.HYPOTHESIS_PRUNED.value:
                 rec = self.journal.records.get(ev.payload.get("decision_id", ""))
                 if rec is not None:
@@ -231,6 +235,35 @@ class Controller:
 
     def set_budget(self, name: str, limit: float, actor: Actor) -> None:
         set_budget(self.runtime, name, limit, actor)
+
+    def update_config(self, changes: dict, actor: Actor) -> dict:
+        """Runtime configuration is human-editable only; every change is
+        an event (auditable, reapplied on recovery). The Config object is
+        shared by reference with all projections, so a change takes
+        effect everywhere immediately."""
+        if actor != Actor.HUMAN:
+            raise PermissionError("runtime configuration is human-editable only")
+        applied = {}
+        for key, value in changes.items():
+            if key.startswith("_") or not hasattr(self.config, key):
+                raise KeyError(f"unknown config field '{key}'")
+            current = getattr(self.config, key)
+            try:
+                if isinstance(current, bool):
+                    value = bool(value)
+                elif isinstance(current, int):
+                    value = int(value)
+                elif isinstance(current, float):
+                    value = float(value)
+                elif isinstance(current, dict) and not isinstance(value, dict):
+                    raise TypeError("must be an object")
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"config field '{key}': {exc}") from exc
+            applied[key] = value
+        self.runtime.emit(Ev.CONFIG_UPDATED, {"changes": applied}, actor)
+        for k, v in applied.items():
+            setattr(self.config, k, v)
+        return applied
 
     # -------------------------------------------------------- capabilities
     def import_skill(self, path: str, actor: Actor) -> dict:
@@ -702,12 +735,17 @@ class Controller:
             "factors": factors,
             "budget": {"money": {"limit": self.budgets.limit("money"),
                                  "remaining": self.budgets.remaining("money")}},
+            # attention hygiene (M17): old external content leaves the
+            # working briefing; the event log keeps it for audit/replay
             "external_content": [
                 {"id": c["id"], "trust": c["trust"],
                  "text": next((e.payload["text"] for e in self.runtime.events()
                                if e.type == Ev.CONTENT_INGESTED.value
                                and e.payload["content_id"] == c["id"]), "")}
-                for c in self.taint.contents],
+                for c in self.taint.contents
+                if c.get("cycle") is None
+                or (self.cycle - c["cycle"])
+                <= self.config.external_content_context_cycles],
             "policies": [p["description"] for p in
                          self.policies.matching({"ACTIVE"})],
             "skills": skills,

@@ -169,9 +169,14 @@ def build_bench_world(ctrl: Controller, budget: float = 850.0) -> None:
 
 def create_bench(seed: int, config: Config | None = None,
                  db_path: str = ":memory:") -> tuple[Controller, BenchEnvironment]:
+    import dataclasses
+    config = dataclasses.replace(config or Config())
+    # the bench models a *persistent* adversary and announcer: their
+    # content stays in the briefing for the whole run, so the metrics
+    # measure the defense layers, not the attention-hygiene window
+    config.external_content_context_cycles = 10_000
     env = BenchEnvironment(seed)
     runtime = Runtime(SqliteEventStore(db_path), DeterministicClock())
-    ctrl = Controller(runtime, MockLlmAdapter(), make_registry(env),
-                      config or Config())
+    ctrl = Controller(runtime, MockLlmAdapter(), make_registry(env), config)
     build_bench_world(ctrl)
     return ctrl, env

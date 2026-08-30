@@ -23,6 +23,7 @@ class Config:
 
     # --- prompt-injection taint tracking ---
     taint_window_cycles: int = 2      # cycles during which external ingestion taints high-impact actions
+    external_content_context_cycles: int = 6  # attention hygiene: older external content leaves the LLM briefing (events keep it)
 
     # --- policy learning guardrails ---
     policy_min_evidence: int = 2          # independent supporting episodes before a policy is created
