@@ -72,6 +72,11 @@ def validate_response(raw: dict) -> tuple[CognitiveResponse | None, list[str]]:
     for key in ("role", "summary", "hypotheses"):
         if key not in raw:
             errors.append(f"missing field '{key}'")
+    # risks feed conflict handling downstream, which reads them as objects;
+    # a bare string here would crash the cycle instead of being repaired
+    for i, r in enumerate(raw.get("risks", []) or []):
+        if not isinstance(r, dict):
+            errors.append(f"risk {i} must be an object")
     hyps: list[Hypothesis] = []
     for i, h in enumerate(raw.get("hypotheses", [])):
         if not isinstance(h, dict) or "action_name" not in h or "params" not in h:
@@ -80,6 +85,14 @@ def validate_response(raw: dict) -> tuple[CognitiveResponse | None, list[str]]:
         sp = h.get("success_prob", 0.8)
         if not (0.0 <= float(sp) <= 1.0):
             errors.append(f"hypothesis {i} success_prob out of [0,1]")
+            continue
+        rc = h.get("risk_class", RiskClass.READ_ONLY.value)
+        # an unknown risk class would crash the supervisor downstream; the
+        # repair loop tells the model which values exist instead
+        if rc not in {r.value for r in RiskClass}:
+            errors.append(
+                f"hypothesis {i} risk_class '{rc}' unknown; use one of "
+                + "/".join(r.value for r in RiskClass))
             continue
         hyps.append(Hypothesis(
             action_name=h["action_name"], params=h["params"],

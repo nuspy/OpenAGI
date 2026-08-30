@@ -421,16 +421,25 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     parser = argparse.ArgumentParser(description="PGDCA server")
     parser.add_argument("--db", default=":memory:", help="event store path")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--adapter", choices=["mock", "anthropic"], default="mock",
+    parser.add_argument("--adapter", choices=["mock", "anthropic", "llmswitch"],
+                        default="mock",
                         help="LLM adapter behind the port (anthropic requires "
                              "the SDK and credentials; server-side refusal "
-                             "fallbacks are enabled by default)")
+                             "fallbacks are enabled by default; llmswitch "
+                             "requires the local library and a configured "
+                             "registry - docs/LOCAL_INTEGRATIONS.md)")
     args = parser.parse_args()
 
     adapter = None
     if args.adapter == "anthropic":
         from ..cognition.anthropic_adapter import AnthropicLlmAdapter
         adapter = AnthropicLlmAdapter()
+    elif args.adapter == "llmswitch":
+        # local integration: run from the repo root so `examples` resolves
+        from examples.adapters.local_llm_provider_adapter import (
+            LocalProviderAdapter,
+        )
+        adapter = LocalProviderAdapter()
     ctrl, _env = create(db_path=args.db, adapter=adapter)
     # expose the local-integration connection points (disabled until real
     # adapters are wired in local development - docs/LOCAL_INTEGRATIONS.md)

@@ -46,6 +46,28 @@ def test_gateway_fails_loudly_after_repairs(ctrl_env):
     assert events_of(ctrl, Ev.ERROR_DETECTED.value)
 
 
+def test_string_risks_are_schema_errors_not_crashes():
+    """Real models emit risks as bare strings; downstream conflict handling
+    reads them as objects, so validation must send them to the repair loop."""
+    from pgdca.cognition.gateway import validate_response
+    raw = {"schema": SCHEMA_VERSION, "role": "critique", "summary": "s",
+           "hypotheses": [], "risks": ["supply might slip"]}
+    resp, errors = validate_response(raw)
+    assert resp is None and any("risk 0" in e for e in errors)
+
+
+def test_unknown_risk_class_is_a_schema_error_not_a_crash():
+    """A made-up risk_class (e.g. "low") would KeyError in the supervisor;
+    validation must catch it and name the allowed values for the repair."""
+    from pgdca.cognition.gateway import validate_response
+    raw = {"schema": SCHEMA_VERSION, "role": "hypotheses", "summary": "s",
+           "hypotheses": [{"action_name": "noop", "params": {},
+                           "risk_class": "low"}]}
+    resp, errors = validate_response(raw)
+    assert resp is None
+    assert any("risk_class" in e and "READ_ONLY" in e for e in errors)
+
+
 def test_mock_adapter_conformance():
     samples = [
         {"role": "hypotheses", "context": {"factors": [], "goals": []}},
