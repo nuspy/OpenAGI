@@ -63,6 +63,21 @@ class Config:
     gateway_max_repairs: int = 1
     role_models: dict = field(default_factory=dict)  # cognitive function -> model id (M13 routing)
 
+    # --- cross-AI review (M29): optional + granular per checkpoint ---
+    # max_rounds = interactions allowed to reach consensus; on exhaustion
+    # on_disagreement decides: "human" (discuss with the human before
+    # enacting) or "primary_decides" (the primary AI decides, honoring
+    # the consensus points already agreed for that checkpoint)
+    review_matrix: dict = field(default_factory=lambda: {
+        "decision": {"enabled": False, "max_rounds": 2,
+                     "on_disagreement": "human",
+                     "min_risk_class": "FINANCIAL"},
+        "strategy": {"enabled": False, "max_rounds": 2,
+                     "on_disagreement": "human"},
+        "retrospective": {"enabled": False, "max_rounds": 1,
+                          "on_disagreement": "primary_decides"},
+    })
+
     # --- capability-acquisition sandbox (M10) ---
     sandbox_cpu_seconds: int = 10
     sandbox_memory_bytes: int = 512 * 1024 * 1024

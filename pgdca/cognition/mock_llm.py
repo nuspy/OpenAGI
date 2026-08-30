@@ -32,6 +32,10 @@ class MockLlmAdapter:
             return self._strategies(ctx)
         if role == "deliberate":
             return self._deliberate(ctx)
+        if role == "defend":
+            return self._defend(ctx)
+        if role == "decide":
+            return self._decide(ctx)
         return {"schema": SCHEMA_VERSION, "role": role or "unknown",
                 "summary": "no-op", "hypotheses": []}
 
@@ -163,6 +167,7 @@ class MockLlmAdapter:
                 "hypotheses": [], "assumptions": [], "risks": risks,
                 "missing_information": missing, "confidence": 0.85}
 
+    # ------------------------------------------------------------------
     def _deliberate(self, ctx: dict) -> dict:
         """Answer a human's question from the deterministic evidence
         packet; numeric edit proposals in the question become structured
@@ -245,6 +250,47 @@ class MockLlmAdapter:
                 "assumptions": [], "risks": [], "missing_information": [],
                 "confidence": 0.85}
 
+    def _defend(self, ctx: dict) -> dict:
+        """Primary's turn in a cross-AI review round: maintained points
+        stay in `risks` (with evidence), accepted objections become
+        `assumptions`; conceding everything withdraws the subject."""
+        context = ctx.get("review_context") or {}
+        imp = (context.get("factor_snapshot") or {}).get("importance")
+        maintained, agreed = [], []
+        for o in ctx.get("objections", []):
+            t = o.get("type")
+            if t == "withdraw":
+                agreed.append(f"conceded: {o.get('reason', 'objection accepted')}")
+            elif t == "high_cost" and imp is not None and float(imp) >= 0.7:
+                maintained.append({"type": t,
+                                   "evidence": f"critical enabler: importance "
+                                               f"{imp}, low substitutability"})
+            elif t == "contest_luck":
+                maintained.append({"type": t,
+                                   "evidence": "decision quality was high; the "
+                                               "alternatives scored lower ex ante"})
+            elif t == "stubborn":
+                maintained.append({"type": t,
+                                   "evidence": "primary maintains its assessment"})
+            else:
+                agreed.append(f"accepted objection: {t or 'unspecified'}")
+        return {"schema": SCHEMA_VERSION, "role": "defend",
+                "summary": (f"{len(maintained)} point(s) maintained, "
+                            f"{len(agreed)} accepted"),
+                "hypotheses": [], "assumptions": agreed, "risks": maintained,
+                "missing_information": [], "confidence": 0.8}
+
+    def _decide(self, ctx: dict) -> dict:
+        pts = ctx.get("agreed_points", [])
+        objs = ctx.get("standing_objections", [])
+        return {"schema": SCHEMA_VERSION, "role": "decide",
+                "summary": (f"final decision by the primary per the review "
+                            f"matrix: proceed. {len(objs)} objection(s) stand "
+                            f"and are recorded as dissent; honoring "
+                            f"{len(pts)} previously agreed point(s)."),
+                "hypotheses": [], "assumptions": [], "risks": [],
+                "missing_information": [], "confidence": 0.75}
+
     def _abstraction(self, ctx: dict) -> dict:
         feats = ctx.get("features", {})
         if feats.get("budget_constrained") and feats.get("picked_high_importance_low_subst"):
@@ -256,3 +302,74 @@ class MockLlmAdapter:
         return {"schema": SCHEMA_VERSION, "role": "abstraction",
                 "summary": text, "hypotheses": [], "assumptions": [],
                 "risks": [], "missing_information": [], "confidence": 0.8}
+
+
+class MockReviewerAdapter:
+    """Deterministic second-AI reviewer for the cross-AI review port.
+
+    Heuristics: expensive purchases draw a first-round objection that a
+    good defense (high importance) resolves; audits that blame bad luck
+    for a failure are contested; `stubborn` subjects never reach
+    consensus (drives the disagreement paths); `withdraw` subjects draw
+    an objection the primary always concedes. A real deployment swaps
+    this for a different provider/model behind the same LlmPort.
+    """
+
+    def __init__(self, stubborn: tuple = (), withdraw: tuple = (),
+                 high_cost_threshold: float = 300.0):
+        self.stubborn = set(stubborn)
+        self.withdraw = set(withdraw)
+        self.high_cost_threshold = high_cost_threshold
+
+    @staticmethod
+    def _subject_key(subject: dict) -> str:
+        return (subject.get("params", {}).get("factor_id")
+                or subject.get("id") or subject.get("decision_id") or "")
+
+    def generate(self, request: dict) -> dict:
+        role = request.get("role")
+        ctx = request.get("context", {})
+        if role != "review":
+            return {"schema": SCHEMA_VERSION, "role": role or "unknown",
+                    "summary": "no-op", "hypotheses": []}
+        subject = ctx.get("subject", {})
+        checkpoint = ctx.get("checkpoint")
+        key = self._subject_key(subject)
+        defended = {o.get("type")
+                    for m in ctx.get("exchange", [])
+                    if m.get("author") == "primary"
+                    for o in m.get("maintained", [])}
+        objections: list[dict] = []
+        if key in self.stubborn:
+            objections.append({"type": "stubborn",
+                               "reason": f"reviewer does not consent "
+                                         f"regarding '{key}'"})
+        if key in self.withdraw and "withdraw" not in defended:
+            objections.append({"type": "withdraw",
+                               "reason": f"reviewer asks to withdraw '{key}'"})
+        if checkpoint == "decision":
+            cost = float(subject.get("cost", 0.0))
+            if cost >= self.high_cost_threshold and "high_cost" not in defended:
+                objections.append({"type": "high_cost",
+                                   "reason": f"cost {cost} deserves scrutiny "
+                                             f"of cheaper alternatives"})
+        elif checkpoint == "retrospective":
+            audit = subject.get("audit") or {}
+            cf = subject.get("counterfactual") or {}
+            if (audit.get("outcome_quality", 1.0) < 0.5
+                    and cf.get("avoidable") is False
+                    and "contest_luck" not in defended):
+                objections.append({"type": "contest_luck",
+                                   "reason": "the 'bad luck' ruling deserves "
+                                             "scrutiny: was the failure "
+                                             "truly unavoidable?"})
+        agree = not objections
+        assumptions = (["agreed: high-impact spending deserves explicit "
+                        "justification"]
+                       if agree and ctx.get("exchange") else [])
+        return {"schema": SCHEMA_VERSION, "role": "review",
+                "summary": ("reviewer agrees" if agree else
+                            f"reviewer raises {len(objections)} objection(s)"),
+                "hypotheses": [], "assumptions": assumptions,
+                "risks": objections, "missing_information": [],
+                "confidence": 0.85}

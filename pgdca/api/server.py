@@ -279,6 +279,22 @@ def create_app(ctrl: Controller) -> FastAPI:
     def llm_usage():
         return ctrl.llm_usage.snapshot()
 
+    # -------------------------------------------- review / grounding
+    @app.get("/api/reviews")
+    def reviews():
+        return ctrl.reviews.snapshot()
+
+    @app.get("/api/knowledge")
+    def knowledge():
+        return ctrl.grounding.snapshot()
+
+    @app.post("/api/knowledge")
+    def add_knowledge(body: dict = Body(...),
+                      x_actor: str | None = Header(default=None)):
+        kid = guard(lambda: ctrl.add_knowledge(
+            body.get("text", ""), body.get("meta"), _actor(x_actor)))
+        return {"id": kid}
+
     # ---------------------------------------------------------- control
     @app.post("/api/control/{command}")
     def control(command: str, x_actor: str | None = Header(default=None)):

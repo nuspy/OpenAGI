@@ -75,6 +75,10 @@ class JournalProjection:
             if rec is not None:
                 rec["compensation"] = {k: v for k, v in p.items()
                                        if k != "decision_id"}
+        elif t == Ev.REVIEW_COMPLETED.value:
+            rec = self.records.get(p.get("decision_id", ""))
+            if rec is not None:
+                rec.setdefault("reviews", []).append(p["review"])
         elif t == Ev.POLICY_SHADOW_EVALUATED.value:
             rec = self.records.get(p.get("decision_id", ""))
             if rec is not None:
@@ -103,6 +107,7 @@ class JournalProjection:
             "audit": rec["audit"],
             "counterfactual": rec.get("counterfactual"),
             "compensation": rec.get("compensation"),
+            "reviews": rec.get("reviews"),
         }
 
     def for_node(self, node_id: str) -> list[dict]:

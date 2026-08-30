@@ -13,6 +13,8 @@ from enum import Enum
 
 from .arbitration import score_candidates
 from .cognition.gateway import Hypothesis, LlmGateway, LlmUsageProjection
+from .cognition.mock_llm import MockReviewerAdapter
+from .cognition.reviewer import ReviewEngine, ReviewProjection
 from .collaboration.deliberation import (DeliberationEngine,
                                          DeliberationProjection)
 from .config import Config
@@ -30,6 +32,8 @@ from .memory.selfmodel import SelfModelProjection
 from .planning import StrategyEngine, StrategyProjection
 from .runtime import Runtime
 from .security.budgets import BudgetProjection, set_budget
+from .security.grounding import GroundingStore
+from .security.grounding import add_knowledge as _add_knowledge
 from .security.guardrails import Flexibility, GuardrailStore, guardrail
 from .security.supervisor import (DecisionKind, InboxProjection,
                                   ProposedDecision, Supervisor, VerdictStatus)
@@ -63,7 +67,7 @@ class CycleResult:
 
 class Controller:
     def __init__(self, runtime: Runtime, adapter, registry: ToolRegistry,
-                 config: Config | None = None):
+                 config: Config | None = None, reviewer_adapter=None):
         self.config = config or Config()
         self.runtime = runtime
         self.graph = runtime.register(GraphProjection(self.config))
@@ -74,9 +78,11 @@ class Controller:
         self.journal = runtime.register(JournalProjection())
         self.policies = runtime.register(PolicyProjection())
         self.calibration = runtime.register(CalibrationProjection(self.config))
+        self.grounding = runtime.register(GroundingStore())
         self.gateway = LlmGateway(runtime, adapter, self.config)
         self.supervisor = Supervisor(runtime, self.guardrails, self.budgets,
-                                     self.taint, self.config)
+                                     self.taint, self.config,
+                                     grounding=self.grounding)
         self.audit_engine = AuditEngine(runtime, self.calibration, self.config)
         self.policy_engine = PolicyEngine(runtime, self.policies, self.gateway,
                                           self.config)
@@ -98,6 +104,11 @@ class Controller:
             runtime, self.deliberations, self.gateway, self.journal,
             self.graph, self.strategies, self.guardrails, self.evidence_store,
             self.config)
+        self.review_gateway = LlmGateway(
+            runtime, reviewer_adapter or MockReviewerAdapter(), self.config)
+        self.reviews = runtime.register(ReviewProjection())
+        self.reviewer = ReviewEngine(runtime, self.reviews, self.gateway,
+                                     self.review_gateway, self.config)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -150,7 +161,8 @@ class Controller:
         import json as _json
         import re as _re
         counters: dict[str, int] = {}
-        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal|str|del)_)(\d+)"')
+        id_re = _re.compile(
+            r'"((?:dec|ver|pol|polseed|gr2|goal|str|del|rvw|kb)_)(\d+)"')
         last_cycle = 0
         last_control: str | None = None
         for ev in events:
@@ -509,8 +521,11 @@ class Controller:
             return CycleResult(self.cycle, "idle")
 
         # strategy branching: plan when nothing is active, then resolve the
-        # branch's next actionable step for this cycle
-        self.strategy_engine.ensure(context)
+        # branch's next actionable step for this cycle. Planning pauses
+        # while a strategy-review disagreement awaits the human (M29).
+        if not self._strategy_review_hold():
+            self.strategy_engine.ensure(context)
+            self._review_strategy()
         allowed = {f["id"] for f in context["factors"]}
         self._cycle_step_ref = self.strategy_engine.current_step_ref(allowed)
 
@@ -607,10 +622,38 @@ class Controller:
         }, Actor.SYSTEM)
         self.policy_engine.shadow_evaluate(decision.to_dict(), dec_context)
 
+        # cross-AI review (M29): a second AI reviews the decision before
+        # it is enacted; the matrix decides rounds and the disagreement
+        # override (discuss with the human vs primary decides)
+        advisories = []
+        escalate = None
+        review = self.reviewer.review(
+            "decision", decision.to_dict(),
+            {"factor_snapshot": fsnap,
+             "budget_remaining": self.budgets.remaining("money")})
+        if review.get("outcome") == "withdrawn":
+            self._denied_signatures.add(self._signature(decision))
+            self.runtime.emit(Ev.HYPOTHESIS_PRUNED,
+                              {"decision_id": decision.id,
+                               "reason": "cross-AI review: the primary "
+                                         "conceded; withdrawn"},
+                              Actor.SYSTEM)
+            self.runtime.emit(Ev.CYCLE_COMPLETED,
+                              {"cycle": self.cycle, "denied": decision.id},
+                              Actor.SYSTEM)
+            return CycleResult(self.cycle, "denied", decision.id)
+        if review.get("outcome") == "disagreement_human":
+            objs = "; ".join(o.get("reason", "") for o in
+                             review.get("standing_objections", []))
+            escalate = [f"no cross-AI consensus after {review['rounds']} "
+                        f"round(s): {objs or 'unspecified objections'}"]
+        elif review.get("outcome") == "disagreement_primary":
+            advisories.append("cross-AI reviewer dissent recorded; the "
+                              "primary decided per the review matrix")
+
         # behavioral recurrence: past failures with the same context
         # signature become an advisory on the verdict (spec: Auditor Agent
         # and Behavioral Recurrence)
-        advisories = []
         preview = self._features_preview(decision.action_name, decision.params,
                                          fsnap)
         sig = PolicyProjection.signature(preview)
@@ -621,7 +664,8 @@ class Controller:
 
         # deterministic authority: the supervisor rules before anything runs
         verdict = self.supervisor.evaluate(decision, self.cycle,
-                                           advisories=advisories)
+                                           advisories=advisories,
+                                           escalate=escalate)
         if verdict["status"] == VerdictStatus.DENIED.value:
             self._denied_signatures.add(self._signature(decision))
             self.runtime.emit(Ev.HYPOTHESIS_PRUNED,
@@ -642,6 +686,44 @@ class Controller:
         self.runtime.emit(Ev.CYCLE_COMPLETED,
                           {"cycle": self.cycle, "executed": decision.id}, Actor.SYSTEM)
         return result
+
+    # ------------------------------------------------- cross-AI review
+    def _strategy_review_hold(self) -> bool:
+        """Replanning pauses while a strategy-review disagreement awaits
+        the human in an open system thread (recovery-safe: derived from
+        the deliberation projection, not volatile state)."""
+        return any(t["opened_by"] == "system"
+                   and (t["messages"][0].get("packet") or {})
+                   .get("checkpoint") == "strategy"
+                   for t in self.deliberations.open_threads())
+
+    def _review_strategy(self) -> None:
+        if not self.reviewer.policy("strategy").get("enabled"):
+            return
+        b = self.strategies.active()
+        if b is None or self.reviews.for_subject(b["id"]):
+            return
+        r = self.reviewer.review(
+            "strategy", b,
+            {"budget_remaining": self.budgets.remaining("money")})
+        if r.get("outcome") in ("withdrawn", "disagreement_human"):
+            self.runtime.emit(Ev.STRATEGY_CHANGED,
+                              {"branch_id": b["id"],
+                               "reason": f"cross-AI review: {r['outcome']}"},
+                              Actor.SYSTEM)
+            if r["outcome"] == "disagreement_human":
+                objs = "; ".join(o.get("reason", "") for o in
+                                 r.get("standing_objections", []))
+                self.deliberation.open_system(
+                    f"cross-AI review disagreement on strategy {b['id']} "
+                    f"('{b['label']}'): {objs or 'unspecified objections'}. "
+                    f"Replanning is paused until you resolve this thread.",
+                    {"checkpoint": "strategy", "branch_id": b["id"],
+                     "review_id": r["id"], "cycle": self.cycle})
+
+    def add_knowledge(self, text: str, meta: dict | None = None,
+                      actor: Actor = Actor.HUMAN) -> str:
+        return _add_knowledge(self.runtime, text, meta, actor)
 
     # -------------------------------------------------------- helpers
     def _escalate(self, reason: str) -> CycleResult:
@@ -919,7 +1001,25 @@ class Controller:
                                             status == "executed")
         audit_payload = self.audit_engine.run(self.journal.records[did])
         self.counterfactual.analyze(self.journal.records[did])
-        self.policy_engine.learn(audit_payload)
+        # cross-AI review of the retrospective analysis (M29): a contested
+        # audit is discussed with the human and never feeds policy
+        # learning until then; in primary_decides mode learning proceeds
+        # with the dissent on record
+        r = self.reviewer.review(
+            "retrospective",
+            {"decision_id": did, "audit": audit_payload,
+             "counterfactual": self.journal.records[did].get("counterfactual")},
+            {})
+        if r.get("outcome") == "disagreement_human":
+            objs = "; ".join(o.get("reason", "") for o in
+                             r.get("standing_objections", []))
+            self.deliberation.open_system(
+                f"cross-AI review contests the retrospective analysis of "
+                f"{did}: {objs or 'unspecified objections'}",
+                {"checkpoint": "retrospective", "decision_id": did,
+                 "review_id": r["id"], "cycle": self.cycle})
+        if r.get("outcome") not in ("disagreement_human", "withdrawn"):
+            self.policy_engine.learn(audit_payload)
         self._apprentice_check(audit_payload["features"].get("domain", "general"))
         return CycleResult(self.cycle, status, did)
 

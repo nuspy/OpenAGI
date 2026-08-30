@@ -142,6 +142,19 @@
         <label>Rule (JSON)<textarea id="gr-rule" rows="3">{"kind":"single_action_cost_limit","max":100}</textarea></label>
         <button class="primary">Create</button>
       </form>
+      <p class="muted" style="font-size:12px">Anti-hallucination (M30): rule <span class="mono">{"kind":"ground_check","attributes":["unit_cost"],"tolerance":0.15,"require_evidence":true}</span> checks claimed values against the grounded knowledge below.</p>
+    </div>
+  </div>
+  <div class="grid2" style="margin-top:12px">
+    <div class="panel"><h3>Grounded knowledge <span class="muted">(observations auto-index; documents are human-only)</span></h3>
+      <table id="kbtable"></table></div>
+    <div class="panel"><h3>Add knowledge document</h3>
+      <form class="gr" onsubmit="return addKnowledge(event)">
+        <label>Text<input id="kb-text" required placeholder="e.g. fruit market price is 2.0 per unit"></label>
+        <label>Structured meta (JSON, optional)<textarea id="kb-meta" rows="2" placeholder='{"factor_id":"fruit","attribute":"unit_cost","value":2.0,"source":"human"}'></textarea></label>
+        <button class="primary">Add</button>
+      </form>
+      <p class="muted" style="font-size:12px">Structured meta makes the fact checkable by ground_check guardrails; free text serves retrieval.</p>
     </div>
   </div>
 </main>
@@ -417,6 +430,10 @@ function renderRationale(p){
       U=${p.counterfactual.best_alternative.ex_ante_utility} · regret ${p.counterfactual.regret}
       · ${p.counterfactual.avoidable?'<span style="color:var(--bad)">avoidable</span>':'not avoidable (bad luck, not bad judgment)'}</div>`:''}
     ${p.compensation?`<div><b>Compensated:</b> ${JSON.stringify(p.compensation.result)}</div>`:''}
+    ${(p.reviews||[]).map(r=>`<div class="muted"><b>Cross-AI review</b> (${r.checkpoint}):
+      <span class="pill ${r.outcome==='consensus'?'ACTIVE':r.outcome==='withdrawn'?'DEFERRED':'PENDING_HUMAN'}">${r.outcome}</span>
+      ${r.rounds} round(s)${(r.standing_objections||[]).length?` · standing: ${r.standing_objections.map(o=>o.reason).join('; ')}`:''}
+      ${(r.agreed_points||[]).length?` · agreed: ${r.agreed_points.join('; ')}`:''}</div>`).join('')}
     <p style="margin:6px 0 0"><button onclick="openThread('decision','${p.decision_id}')">Discuss this decision</button></p>
   </div>`;
 }
@@ -445,6 +462,14 @@ async function verifyCaps(){
   const r=await post('/capabilities/verify').catch(alert);
   if(r)alert(r.quarantined.length?('QUARANTINED: '+r.quarantined.map(q=>q.kind+' '+q.name).join(', ')):'all imported capabilities match their import-time digests');
   refresh();
+}
+
+async function addKnowledge(ev){
+  ev.preventDefault();
+  let meta=null; const m=$('#kb-meta').value.trim();
+  if(m){try{meta=JSON.parse(m)}catch(e){alert('meta must be valid JSON');return false}}
+  await post('/knowledge',{text:$('#kb-text').value,meta}).catch(alert);
+  $('#kb-text').value=''; refresh(); return false;
 }
 
 async function createGuardrail(ev){
@@ -504,6 +529,12 @@ async function refresh(){
     $('#recent').innerHTML=inbox.recent.slice().reverse().map(e=>decisionCard(e,false)).join('')||'<p class="muted">No verdicts yet.</p>';
 
     const g=await api('/graph'); drawGraph(g);
+
+    const kb=await api('/knowledge');
+    $('#kbtable').innerHTML='<tr><th>id</th><th>text</th><th>structured</th></tr>'+
+      (kb.slice().reverse().slice(0,15).map(d=>`<tr><td class="mono">${d.id}</td><td>${esc(d.text)}</td>
+        <td class="mono">${d.meta&&d.meta.factor_id?esc(`${d.meta.factor_id}.${d.meta.attribute}=${d.meta.value}`):'—'}</td></tr>`).join('')
+       ||'<tr><td class="muted" colspan="3">no grounded facts yet — research observations auto-index here</td></tr>');
 
     const grs=await api('/guardrails');
     $('#grtable').innerHTML='<tr><th>tier</th><th>description</th><th>rule</th><th>flex</th><th>status</th><th>origin</th><th></th></tr>'+

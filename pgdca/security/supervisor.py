@@ -80,8 +80,12 @@ def _matches(matcher: dict, decision: ProposedDecision) -> bool:
 
 
 def _rule_triggered(rule: dict, decision: ProposedDecision,
-                    budgets: BudgetProjection) -> tuple[bool, str]:
+                    budgets: BudgetProjection,
+                    grounding=None) -> tuple[bool, str]:
     kind = rule.get("kind")
+    if kind == "ground_check":
+        from .grounding import ground_check
+        return ground_check(rule, decision, grounding)
     if kind == "single_action_cost_limit":
         if decision.cost > float(rule["max"]):
             return True, f"action cost {decision.cost} exceeds limit {rule['max']}"
@@ -114,21 +118,24 @@ def _rule_triggered(rule: dict, decision: ProposedDecision,
 class Supervisor:
     def __init__(self, runtime, guardrails: GuardrailStore,
                  budgets: BudgetProjection, taint: TaintTracker,
-                 config: Config | None = None):
+                 config: Config | None = None, grounding=None):
         self.runtime = runtime
         self.guardrails = guardrails
         self.budgets = budgets
         self.taint = taint
         self.config = config or Config()
+        self.grounding = grounding
 
     def evaluate(self, decision: ProposedDecision, cycle: int | None,
-                 advisories: list[str] | None = None) -> dict:
+                 advisories: list[str] | None = None,
+                 escalate: list[str] | None = None) -> dict:
         # taint stamping happens here so no upstream component can forget it
         if not decision.tainted:
             decision.tainted = bool(decision.derived_from) or self.taint.tainted(cycle)
 
         status = VerdictStatus.GRANTED.value
         reasons: list[str] = [f"[advisory] {a}" for a in (advisories or [])]
+        reasons += [f"[review] {e}" for e in (escalate or [])]
         triggered: list[str] = []
         for g in self.guardrails.active():
             if not _matches(g.get("conditions", {}), decision):
@@ -137,7 +144,8 @@ class Supervisor:
                 continue
             if any(_matches(x, decision) for x in g.get("exclusions", [])):
                 continue
-            hit, why = _rule_triggered(g["rule"], decision, self.budgets)
+            hit, why = _rule_triggered(g["rule"], decision, self.budgets,
+                                       self.grounding)
             if not hit:
                 continue
             triggered.append(g["id"])
@@ -158,6 +166,11 @@ class Supervisor:
             elif flex == Flexibility.SOFT_BLOCK.value and status != VerdictStatus.DENIED.value:
                 status = VerdictStatus.HUMAN_REQUIRED.value
             # WARN / ADVISORY only annotate
+
+        # cross-AI review disagreement in "human" mode: the final decision
+        # is discussed with the human before being enacted (M29)
+        if escalate and status == VerdictStatus.GRANTED.value:
+            status = VerdictStatus.HUMAN_REQUIRED.value
 
         if (status == VerdictStatus.DENIED.value
                 and any(self.guardrails.guardrails[t]["rule"].get("kind") == "budget_cap"

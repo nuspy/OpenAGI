@@ -38,12 +38,14 @@
 | M26 | Tool esterni interface-first | P1 | utente (rev. 2) | REQUISITO | Spec |
 | M27 | Co-decisione in itinere | P1 | utente (rev. 2) | REQUISITO | Spec |
 | M28 | Skills e MCP server importabili | P1 | utente (rev. 3) | REQUISITO | Spec, Rationale |
+| M29 | Review incrociata con seconda AI (matrix granulare, consenso, override umano/AI) | P1 | utente (rev. 4) | REQUISITO — implementato (Fase 8) | Spec, codice |
+| M30 | Ground-check RAG nei guardrail (anti-allucinazione) | P1 | utente (rev. 4) | REQUISITO — implementato (Fase 8) | Spec, codice |
 
 Priorità: **P0** = da risolvere prima di iniziare l'implementazione · **P1** = prima revisione dei documenti · **P2** = seconda passata · **P3** = cosmetica.
 
-Le voci M23–M28 recepiscono i requisiti espressi dall'utente: sono requisiti da specificare nei documenti, non proposte da approvare.
+Le voci M23–M30 recepiscono i requisiti espressi dall'utente: sono requisiti da specificare nei documenti, non proposte da approvare.
 
-**Registro delle decisioni (30/08/2026)**: approvate M1–M17 e M19–M20; respinte M21 e M22 (la sezione SGI e le denominazioni restano come in v1.0); confermata l'attivazione asimmetrica dei guardrail Tier 2 (M23); aggiunto il requisito M28 (skills e MCP server importabili).
+**Registro delle decisioni (30/08/2026)**: approvate M1–M17 e M19–M20; respinte M21 e M22 (la sezione SGI e le denominazioni restano come in v1.0); confermata l'attivazione asimmetrica dei guardrail Tier 2 (M23); aggiunto il requisito M28 (skills e MCP server importabili). **Rev. 4 (stessa data)**: aggiunti i requisiti M29 (review incrociata opzionale e granulare: per ogni tipo di decisione/analisi si configura attivazione, numero massimo di interazioni per il consenso e override in caso di mancato consenso — discussione con l'umano oppure decisione finale della AI principale che onora i consensi già concordati per quell'argomento) e M30 (ground-check RAG opzionale dentro i guardrail esistenti, su dati e decisioni, contro le allucinazioni). Entrambi implementati nella Fase 8 — vedi `docs/PHASE8.md`.
 
 *Nota sulla numerazione*: i riferimenti "§N" nelle proposte usano la numerazione **v1.0** dei documenti; nella v1.1 la numerazione è scalata per l'inserimento delle nuove sezioni.
 

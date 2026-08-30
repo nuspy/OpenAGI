@@ -205,12 +205,13 @@ def build_world(ctrl: Controller) -> None:
 
 def create(db_path: str = ":memory:", config: Config | None = None,
            adapter=None, env: ToyEnvironment | None = None,
-           build: bool = True) -> tuple[Controller, ToyEnvironment]:
+           build: bool = True, reviewer=None) -> tuple[Controller, ToyEnvironment]:
     env = env or ToyEnvironment()
     runtime = Runtime(SqliteEventStore(db_path), DeterministicClock())
     fresh = runtime.store.last_seq() == 0
     ctrl = Controller(runtime, adapter or MockLlmAdapter(),
-                      make_registry(env), config or Config())
+                      make_registry(env), config or Config(),
+                      reviewer_adapter=reviewer)
     if build and fresh:
         build_world(ctrl)
     if not fresh:
