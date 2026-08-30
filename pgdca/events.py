@@ -1,0 +1,93 @@
+"""Event model.
+
+Every state change in PGDCA is an event appended to the event store
+(spec: "Event Sourcing, Consistency and Deterministic Replay"). Event
+payloads are plain JSON-serializable dicts.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Actor(str, Enum):
+    SYSTEM = "system"
+    HUMAN = "human"
+    SUPERVISOR = "supervisor"
+    ENVIRONMENT = "environment"
+
+
+class Ev(str, Enum):
+    # graph / goals
+    NODE_ADDED = "NODE_ADDED"
+    NODE_UPDATED = "NODE_UPDATED"
+    NODE_INVALIDATED = "NODE_INVALIDATED"
+    EDGE_ADDED = "EDGE_ADDED"
+    EDGE_UPDATED = "EDGE_UPDATED"
+    TARGET_INVALIDATED = "TARGET_INVALIDATED"
+    TARGET_COMPLETED = "TARGET_COMPLETED"
+    CONFLICT_DETECTED = "CONFLICT_DETECTED"
+    GOAL_PROPOSED = "GOAL_PROPOSED"
+    GOAL_RATIFIED = "GOAL_RATIFIED"
+    GOAL_REEVALUATED = "GOAL_REEVALUATED"
+    # cycle / control
+    CYCLE_STARTED = "CYCLE_STARTED"
+    CYCLE_COMPLETED = "CYCLE_COMPLETED"
+    CONTROL_COMMAND = "CONTROL_COMMAND"
+    STATE_CHANGED = "STATE_CHANGED"
+    # cognition
+    LLM_REQUEST = "LLM_REQUEST"
+    LLM_RESPONSE = "LLM_RESPONSE"
+    HYPOTHESIS_CREATED = "HYPOTHESIS_CREATED"
+    HYPOTHESIS_PRUNED = "HYPOTHESIS_PRUNED"
+    SENSITIVITY_UNSTABLE = "SENSITIVITY_UNSTABLE"
+    DECISION_MADE = "DECISION_MADE"
+    # security
+    SUPERVISOR_VERDICT = "SUPERVISOR_VERDICT"
+    SUPERVISOR_OVERRIDE = "SUPERVISOR_OVERRIDE"
+    GUARDRAIL_CREATED = "GUARDRAIL_CREATED"
+    GUARDRAIL_UPDATED = "GUARDRAIL_UPDATED"
+    GUARDRAIL_TRIGGERED = "GUARDRAIL_TRIGGERED"
+    BUDGET_SET = "BUDGET_SET"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    CONTENT_INGESTED = "CONTENT_INGESTED"
+    INJECTION_SUSPECTED = "INJECTION_SUSPECTED"
+    HUMAN_EDIT = "HUMAN_EDIT"
+    HUMAN_ESCALATION = "HUMAN_ESCALATION"
+    # execution
+    ACTION_EXECUTED = "ACTION_EXECUTED"
+    ACTION_FAILED = "ACTION_FAILED"
+    RESOURCE_SPENT = "RESOURCE_SPENT"
+    OBSERVATION_RECEIVED = "OBSERVATION_RECEIVED"
+    OUTCOME_RECORDED = "OUTCOME_RECORDED"
+    VERIFICATION_COMPLETED = "VERIFICATION_COMPLETED"
+    ERROR_DETECTED = "ERROR_DETECTED"
+    # learning
+    AUDIT_COMPLETED = "AUDIT_COMPLETED"
+    POLICY_CREATED = "POLICY_CREATED"
+    POLICY_UPDATED = "POLICY_UPDATED"
+    POLICY_SHADOW_EVALUATED = "POLICY_SHADOW_EVALUATED"
+    CALIBRATION_UPDATED = "CALIBRATION_UPDATED"
+    # deliberation
+    DELIBERATION_OPENED = "DELIBERATION_OPENED"
+    DELIBERATION_RESOLVED = "DELIBERATION_RESOLVED"
+
+
+@dataclass(frozen=True)
+class Event:
+    seq: int
+    type: str
+    ts: str
+    actor: str
+    cycle: int | None
+    payload: dict
+
+    def to_dict(self) -> dict:
+        return {
+            "seq": self.seq,
+            "type": self.type,
+            "ts": self.ts,
+            "actor": self.actor,
+            "cycle": self.cycle,
+            "payload": self.payload,
+        }

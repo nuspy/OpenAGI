@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgdca"
+version = "0.1.0"
+description = "Persistent Goal-Directed Cognitive Architecture - Phase 0 (Minimum Viable Loop)"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+include = ["pgdca*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -15,4 +15,28 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-Pre-implementation, revision **v1.1** applied (2026-08-30). The review recorded in `docs/ANALISI_E_PROPOSTE.md` approved items M1–M17 and M19–M20, rejected M21–M22, and added requirements M23–M28 (two-tier guardrails, decision supervisor, full GUI with separated frontend, interface-first tools, in-progress co-decision, importable skills/MCP servers). The rationale and the implementation spec carry the revision directly; the scientific paper carries it as **tracked changes** (author "Claude Code") to accept or reject in Word — rejecting all changes restores v1.0 exactly. Implementation starts from Phase 0 (Minimum Viable Loop) as defined in the spec.
+**Phase 0 (Minimum Viable Loop) implemented and green** — see [`docs/PHASE0.md`](docs/PHASE0.md) for the spec-traceability matrix and acceptance criteria. Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
+
+## Phase 0 quickstart
+
+```bash
+pip install -e ".[api,dev]"
+pytest                          # 35 tests incl. the acceptance scenario + deterministic replay
+python -m pgdca.scenario.toy    # scripted CLI demo
+python -m pgdca.api.server      # backend + web GUI at http://127.0.0.1:8000
+```
+
+The event store is the single source of truth; the LLM proposes and the controller governs; the Decision Supervisor rules on every significant decision; Tier 1 guardrails are technically non-writable by the system identity; PAUSE/STOP are honored unconditionally; external content is data, never instructions.
+
+```
+pgdca/
+  store.py runtime.py           event sourcing + deterministic replay
+  domain.py graph.py            typed weighted causal graph (Appendix A schema)
+  arbitration.py                canonical U(a), opportunity cost, sensitivity gate
+  security/                     two-tier guardrails, decision supervisor, budgets, taint
+  cognition/                    LLM gateway port + mock/replay adapters
+  memory/                       journal, audit (dq≠oq), policies (SHADOW), calibration
+  controller.py                 deterministic controller + cognitive cycle
+  tools/ scenario/              tool registry + toy acceptance scenario
+  api/ ui/                      FastAPI backend + single-file web GUI
+```
