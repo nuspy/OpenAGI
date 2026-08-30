@@ -15,4 +15,4 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-Pre-implementation. The three PGDCA documents above (v1.0, 2026-08-30) are the project's founding specification. A critical analysis with 27 proposed modifications/requirements is under discussion in `docs/ANALISI_E_PROPOSTE.md`; implementation starts once the discussion converges.
+Pre-implementation, revision **v1.1** applied (2026-08-30). The review recorded in `docs/ANALISI_E_PROPOSTE.md` approved items M1–M17 and M19–M20, rejected M21–M22, and added requirements M23–M28 (two-tier guardrails, decision supervisor, full GUI with separated frontend, interface-first tools, in-progress co-decision, importable skills/MCP servers). The rationale and the implementation spec carry the revision directly; the scientific paper carries it as **tracked changes** (author "Claude Code") to accept or reject in Word — rejecting all changes restores v1.0 exactly. Implementation starts from Phase 0 (Minimum Viable Loop) as defined in the spec.

@@ -1,4 +1,4 @@
-<!-- Mirror Markdown generato automaticamente da PGDCA_Scientific_Paper.docx (v1.0, 30 Aug 2026) per leggibilita' e diff. Il .docx resta il documento sorgente. -->
+<!-- Mirror Markdown generato automaticamente da PGDCA_Scientific_Paper.docx (v1.1 redline, 30 Aug 2026). Mostra la vista con le tracked changes ACCETTATE; il .docx resta il documento sorgente e porta le modifiche come revisioni da accettare/rifiutare in Word. -->
 
 # Persistent Goal-Directed Cognitive Architecture (PGDCA): Deterministic Orchestration of Generative LLM Inference as a Path Toward Artificial General Intelligence
 
@@ -84,6 +84,12 @@ The proposed architecture therefore combines five established research direction
 (4) external action and observation,
 (5) experience-driven policy adaptation.
 
+These directions also have deep roots in classical cognitive architectures and agent theory. SOAR introduced a persistent decision cycle with impasse-driven subgoaling and chunking — a mechanism that compiles problem-solving episodes into reusable productions and is a direct ancestor of the experience abstraction used here [10]. ACT-R established the architectural separation of declarative and procedural memory with subsymbolic utility learning [11]. Belief-Desire-Intention (BDI) theory and its implementations formalized persistent goals, commitment, and intention reconsideration; the question of when an agent should reconsider its intentions, studied empirically through bold versus cautious reconsideration policies, is precisely the goal-reconciliation problem PGDCA addresses at multiple timescales [12,13].
+
+Among LLM-native systems, Cognitive Architectures for Language Agents (CoALA) is the closest prior framework, organizing language agents around working and long-term memory, an action space, and a decision cycle [14]. MemGPT and AIOS develop the operating-system analogy for LLMs, managing context as virtual memory and scheduling agent processes [15,16]. Voyager demonstrates automatic acquisition of an ever-growing skill library [17], and Generative Agents demonstrate a memory stream with reflection feeding future behavior [18]. LLM-Modulo frameworks argue that LLM plan generation must be paired with external verification and critique [19], and deliberate search over branching reasoning paths has been developed in Tree of Thoughts and successor systems [20].
+
+PGDCA differs from these systems in the specific combination it makes first-class: (i) auditing that separates decision quality from outcome quality and feeds policy learning; (ii) a global causal factor graph with cross-goal antagonism and opportunity cost inside multi-objective arbitration; (iii) deterministic authority — a security boundary in which authorization, guardrails, budgets, and lifecycle are technically outside the model; (iv) capability-acquisition rate as a primary evaluation metric; and (v) the falsifiable prediction that, beyond a base-model capability threshold, system-level architecture explains an increasing fraction of variance in long-horizon autonomous performance. The claimed novelty is the coherent integration of these mechanisms in one persistent architecture, not the invention of the individual components.
+
 ## 5. System Model
 
 Let the complete cognitive system at time t be represented by:
@@ -123,6 +129,8 @@ The architecture is therefore a recurrent system:
 S_t -> retrieve -> generate -> evaluate -> authorize -> act -> observe -> audit -> learn -> S_{t+1}.
 
 The crucial point is that the LLM is one operator inside this recurrence rather than the entire recurrence itself.
+
+Formally, this system model can be read as a partially observable decision process: W_t and M_t together play the role of a belief state over an environment whose transition and observation structure is unknown and non-stationary [23]. PGDCA does not claim optimal POMDP solving; the framing locates the architecture in known formal territory and clarifies what is being approximated.
 
 ## 6. Deterministic Orchestration of Generative Inference
 
@@ -201,7 +209,7 @@ SUPERSEDES.
 
 A relationship r is represented as:
 
-r = (type, strength, importance, utility, cost, probability, risk, confidence, substitutability, reversibility, latency, provenance).
+r = (type, strength, importance, utility, cost, probability, risk, confidence, substitutability, reversibility, latency, duration, provenance).
 
 This prevents the common simplification of representing the world as a binary list of helpful and harmful factors.
 
@@ -230,6 +238,8 @@ IG(a) = expected information gain,
 CG(a) = capability gain.
 
 The system may then seek substitutions, scaling, temporal separation, or new enabling factors rather than simply choosing one goal and discarding the other.
+
+The utility function is an instance of multi-attribute utility theory [21]; the linear-additive form is a configurable default rather than a theoretical commitment, and non-additive interactions or explicit risk attitudes may require alternative aggregation.
 
 ## 10. Indirect Effects and Causal Propagation
 
@@ -433,6 +443,12 @@ This separation provides a formal distinction between cognitive proposal and ope
 
 The architecture consequently resembles a capability-based operating system: the model requests a capability; the controller decides whether that capability may be exercised in the current state.
 
+Authorization is organized as a two-tier guardrail system. Tier 1 guardrails form a constitution: they are editable only by the human, through a dedicated interface, and the system identity has no write permission to them at the storage level — a technical guarantee rather than a convention. Tier 2 guardrails may be created by the system itself, typically from audits and incidents; they are discussable and editable by both human and machine, may never weaken Tier 1, and activate asymmetrically: a self-imposed restriction may take effect immediately, while any expansion of permitted behavior requires prior human approval.
+
+A Decision Supervisor generalizes the authorization gateway from external actions to every significant decision — goal changes, strategy selection, resource allocation, tool invocation, external communication. Each verdict (granted, denied, human-required) is an auditable event, and the human can override any verdict in either direction from the interface; overrides are themselves audited and used to calibrate the supervisor.
+
+Autonomy is bounded by budgets — spend, external communications, irreversible actions, and compute per goal, per time window — enforced deterministically and expandable only by explicit human decision, a ratchet that learning cannot loosen. Persistent goals and meta-goals are created and modified only with explicit human ratification, and PAUSE, STOP, and ROLLBACK commands are honored unconditionally at the controller level; no learned policy may create incentives to resist or delay human override.
+
 ## 22. Formal Control Algorithm
 
 Algorithm 1: Persistent Goal Control Loop
@@ -615,6 +631,10 @@ Measure:
 17. Adaptation to environmental change.
 18. Recovery from failed assumptions.
 
+Each metric requires an operational definition. For example: goal preservation is measured as semantic drift between the ratified goal and observed behavior; error recurrence as the repetition rate per class of an explicit error taxonomy; decision calibration by Brier score and expected calibration error; resource efficiency as success normalized by inference and monetary cost; and oversight load as the human intervention rate.
+
+The protocol should fix the number of runs per condition and the random seeds in advance, report confidence intervals, pre-register the predictions of Appendix B, and enforce equal inference budgets across conditions at the LLM gateway, so that architectural gains are not an artifact of additional token expenditure.
+
 ## 28. Benchmark Design
 
 Existing benchmarks often evaluate short episodes. PGDCA requires long-horizon benchmarks with persistent state.
@@ -636,6 +656,10 @@ A suitable benchmark should contain:
 - opportunities to learn from failure.
 
 Success should be measured by final goal achievement and by the quality of the trajectory, not only by individual actions.
+
+Existing environments cover parts of this profile — GAIA for multi-step tool use [24], WebArena and OSWorld for realistic web and desktop interaction [25,26], τ-bench for tool-agent-user interaction [27], TheAgentCompany for long professional workflows [28] — but none maintains persistent goals across days under changing conditions. A complementary benchmark (PGDCA-Bench) is therefore proposed: a simulated environment with deterministic seeds, mutable conditions, injected opportunities and failures, competing goals, hidden capability gaps, and delayed consequences.
+
+Evaluation must also include adversarial and safety dimensions: resistance to indirect prompt injection embedded in ingested content [22], and compliance under pressure — the system must respect budgets, guardrails, and STOP commands even when they conflict with goal progress.
 
 ## 29. Falsifiability
 
@@ -687,6 +711,9 @@ Incorrect estimates may cause inefficient allocation.
 Controller rigidity:
 A deterministic controller may constrain novel behavior if its transition system is too restrictive.
 
+Instruction injection:
+Ingested external content — web pages, messages, transcripts, tool and skill descriptions — may embed adversarial instructions. Because the architecture combines access to private state, continuous ingestion of untrusted content, and the ability to communicate and pay externally, indirect prompt injection is a first-order failure mode [22]; external content must remain data rather than instructions, and recently ingested content must taint subsequent high-impact actions pending elevated authorization.
+
 These failures motivate empirical auditing rather than assuming that orchestration automatically produces intelligence.
 
 ## 31. Computational and Economic Considerations
@@ -723,6 +750,8 @@ This reframing does not eliminate model research. Better models raise the ceilin
 
 The hypothesis is that the next major capability gains may increasingly arise from orchestration, memory, state representation, causal modeling, tool acquisition, verification, and experience abstraction.
 
+A useful design distinction follows: some architectural functions are durable complements — persistence, authority and security boundaries, budgets, audit, actuation, provenance — which no model can supply by definition and whose value grows with autonomy; others are erodible substitutes that compensate for current model weaknesses, such as elaborate planning scaffolds, and should be engineered behind interfaces so they can be removed at low cost as models improve. The architectural thesis is strongest for the first class, and the erosion of the second class is itself a testable prediction.
+
 ## 33. Discussion
 
 There is a strong argument that the architecture described here resembles an operating system for intelligence. The analogy is useful but incomplete. An operating system does not decide what a human should value; PGDCA includes an explicit motivational and goal-arbitration layer because autonomous goal pursuit requires persistent criteria for selecting among possible futures.
@@ -746,6 +775,8 @@ Fourth, causal graphs generated by language models can be unreliable. Empirical 
 Fifth, continual policy abstraction can amplify systematic errors. Audit and provenance mechanisms are necessary but not sufficient.
 
 Sixth, increased autonomy increases the cost of mistakes. The system therefore requires external authorization and bounded execution policies.
+
+Seventh, external-world capabilities carry legal and ethical obligations that the architecture must enforce as constraints: disclosure of AI identity in voice interactions, recording-consent rules, data-protection requirements for models of human actors and motivations (which constitute profiling of natural persons), honest sender identity, and strong-customer-authentication requirements in payments. Inferred human motivations must never be used manipulatively; influence must remain transparent.
 
 Finally, the claim that PGDCA is a route to AGI remains empirical. This paper presents a research program, not a demonstrated AGI result.
 
@@ -773,6 +804,8 @@ Evaluate against long-horizon, cross-domain, dynamic-environment benchmarks.
 
 Phase VII:
 Measure whether the architecture produces transfer, adaptation and autonomy gains that cannot be explained by additional inference budget alone.
+
+The engineering counterpart of this program is maintained in the accompanying implementation specification, whose phase plan — beginning with a Phase 0 minimal viable loop and proceeding in vertical slices — is normative for implementation; the phases above describe the research trajectory.
 
 ## 36. Conclusion
 
@@ -811,6 +844,44 @@ The proposed route to SGI is then a continuation of the same process: increase t
 [8] Schick, T., Dwivedi-Yu, J., Dessì, R., et al. (2023). Toolformer: Language Models Can Teach Themselves to Use Tools. Advances in Neural Information Processing Systems.
 
 [9] Luo, J., Tian, Y., Cao, C., Luo, Z., Lin, H., Li, K., et al. (2026). From Storage to Experience: A Survey on the Evolution of LLM Agent Memory Mechanisms. ACL 2026 Findings; arXiv:2605.06716.
+
+[10] Laird, J. E., Newell, A., & Rosenbloom, P. S. (1987). SOAR: An Architecture for General Intelligence. Artificial Intelligence, 33(1), 1–64.
+
+[11] Anderson, J. R., Bothell, D., Byrne, M. D., Douglass, S., Lebiere, C., & Qin, Y. (2004). An Integrated Theory of the Mind. Psychological Review, 111(4), 1036–1060.
+
+[12] Bratman, M. E. (1987). Intention, Plans, and Practical Reason. Harvard University Press.
+
+[13] Rao, A. S., & Georgeff, M. P. (1995). BDI Agents: From Theory to Practice. Proceedings of the First International Conference on Multi-Agent Systems (ICMAS-95), 312–319.
+
+[14] Sumers, T. R., Yao, S., Narasimhan, K., & Griffiths, T. L. (2024). Cognitive Architectures for Language Agents. Transactions on Machine Learning Research. arXiv:2309.02427.
+
+[15] Packer, C., Wooders, S., Lin, K., Fang, V., Patil, S. G., Stoica, I., & Gonzalez, J. E. (2023). MemGPT: Towards LLMs as Operating Systems. arXiv:2310.08560.
+
+[16] Mei, K., Li, Z., Xu, S., Ye, R., Ge, Y., & Zhang, Y. (2024). AIOS: LLM Agent Operating System. arXiv:2403.16971.
+
+[17] Wang, G., Xie, Y., Jiang, Y., Mandlekar, A., Xiao, C., Zhu, Y., Fan, L., & Anandkumar, A. (2023). Voyager: An Open-Ended Embodied Agent with Large Language Models. arXiv:2305.16291.
+
+[18] Park, J. S., O'Brien, J. C., Cai, C. J., Morris, M. R., Liang, P., & Bernstein, M. S. (2023). Generative Agents: Interactive Simulacra of Human Behavior. Proceedings of UIST 2023.
+
+[19] Kambhampati, S., Valmeekam, K., Guan, L., Verma, M., Stechly, K., Bhambri, S., Saldyt, L., & Murthy, A. (2024). Position: LLMs Can't Plan, But Can Help Planning in LLM-Modulo Frameworks. Proceedings of the 41st International Conference on Machine Learning.
+
+[20] Yao, S., Yu, D., Zhao, J., Shafran, I., Griffiths, T. L., Cao, Y., & Narasimhan, K. (2023). Tree of Thoughts: Deliberate Problem Solving with Large Language Models. Advances in Neural Information Processing Systems.
+
+[21] Keeney, R. L., & Raiffa, H. (1976). Decisions with Multiple Objectives: Preferences and Value Tradeoffs. Wiley.
+
+[22] Greshake, K., Abdelnabi, S., Mishra, S., Endres, C., Holz, T., & Fritz, M. (2023). Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection. Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security (AISec).
+
+[23] Kaelbling, L. P., Littman, M. L., & Cassandra, A. R. (1998). Planning and Acting in Partially Observable Stochastic Domains. Artificial Intelligence, 101(1–2), 99–134.
+
+[24] Mialon, G., Fourrier, C., Swift, C., Wolf, T., LeCun, Y., & Scialom, T. (2023). GAIA: A Benchmark for General AI Assistants. arXiv:2311.12983.
+
+[25] Zhou, S., Xu, F. F., Zhu, H., Zhou, X., Lo, R., Sridhar, A., et al. (2024). WebArena: A Realistic Web Environment for Building Autonomous Agents. International Conference on Learning Representations.
+
+[26] Xie, T., Zhang, D., Chen, J., Li, X., Zhao, S., Cao, R., et al. (2024). OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments. Advances in Neural Information Processing Systems.
+
+[27] Yao, S., Shinn, N., Razavi, P., & Narasimhan, K. (2024). τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. arXiv:2406.12045.
+
+[28] Xu, F. F., Song, Y., Li, B., Tang, Y., Jain, K., Bao, M., et al. (2024). TheAgentCompany: Benchmarking LLM Agents on Consequential Real World Tasks. arXiv:2412.14161.
 
 ## Appendix A. Compact Architecture Diagram
 
@@ -864,3 +935,5 @@ Audit --> Experience Abstraction --> Policy ------+
 - Self-calibration should improve tool routing and escalation decisions.
 - Deterministic authorization should reduce catastrophic external-action errors without requiring the LLM to become more cautious internally.
 - At sufficiently high base-model capability, system-level architecture should explain an increasing fraction of variance in long-horizon autonomous performance.
+- Erodible-substitute components (such as elaborate planning scaffolds) should contribute progressively less as base-model capability increases, while durable complements (persistence, authority, audit, actuation) should not; the erosion itself is a testable prediction.
+- Guardrail and supervisor mechanisms should reduce catastrophic external-action errors and injection-induced actions without materially reducing long-horizon goal achievement.
