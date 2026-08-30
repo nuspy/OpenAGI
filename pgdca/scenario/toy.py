@@ -94,12 +94,18 @@ def make_registry(env: ToyEnvironment) -> ToolRegistry:
         return ToolResult(status="ok", observation=r)
 
     reg.register(ToolSpec("research_price", RiskClass.READ_ONLY.value,
-                          "look up the market price of a factor"), research_price)
+                          "look up the market price of a factor; params: "
+                          '{"factor_id": "<id of a factor node>"}'),
+                 research_price)
     reg.register(ToolSpec("purchase", RiskClass.FINANCIAL.value,
-                          "buy a factor, spending from the money budget"), purchase)
+                          "buy a factor, spending from the money budget; "
+                          'params: {"factor_id": "<id of a factor node>", '
+                          '"quantity": <int>=1>}'), purchase)
     reg.register(ToolSpec("compensate.purchase", RiskClass.FINANCIAL.value,
                           "refund a revoked purchase (human-authorized "
-                          "compensation path)"), compensate_purchase)
+                          "compensation path); params: "
+                          '{"factor_id": "<id>", "quantity": <int>}'),
+                 compensate_purchase)
     return reg
 
 

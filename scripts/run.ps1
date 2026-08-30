@@ -24,6 +24,10 @@ param(
     # non "-Db": collide con l'alias del common parameter -Debug
     [string]$DbPath = "pgdca.db",
     [int]$Port = 8000,
+    [ValidateSet("none", "callapicall")]
+    [string]$Voice = "none",     # callapicall = telefonate REALI via bridge :8770
+    [switch]$MockPorts,          # dry-run: porte esterne attive sui mock
+    [switch]$EmptyWorld,         # mondo vuoto invece dello scenario montagna
     [switch]$Open
 )
 
@@ -49,5 +53,8 @@ if ($Open) {
     } -ArgumentList "http://127.0.0.1:$Port" | Out-Null
 }
 
-Write-Host "PGDCA su http://127.0.0.1:$Port (adapter: $Adapter, db: $DbPath) - Ctrl+C per fermare"
-& $venvPy -m pgdca.api.server --adapter $Adapter --db $DbPath --port $Port
+$extra = @("--voice", $Voice)
+if ($MockPorts) { $extra += "--mock-ports" }
+if ($EmptyWorld) { $extra += "--empty" }
+Write-Host "PGDCA su http://127.0.0.1:$Port (adapter: $Adapter, voice: $Voice, db: $DbPath) - Ctrl+C per fermare"
+& $venvPy -m pgdca.api.server --adapter $Adapter --db $DbPath --port $Port @extra

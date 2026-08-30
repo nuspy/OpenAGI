@@ -551,6 +551,20 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                              "fallbacks are enabled by default; llmswitch "
                              "requires the local library and a configured "
                              "registry - docs/LOCAL_INTEGRATIONS.md)")
+    parser.add_argument("--voice", choices=["none", "callapicall"],
+                        default="none",
+                        help="voice adapter behind voice.call: callapicall "
+                             "drives REAL phone calls through the local "
+                             "CallAPICall bridge (:8770) - the Supervisor "
+                             "still gates every call as "
+                             "EXTERNAL_COMMUNICATION")
+    parser.add_argument("--mock-ports", action="store_true",
+                        help="enable the external ports over their mocks "
+                             "(dry-run: voice.call & co. execute without "
+                             "touching the real world)")
+    parser.add_argument("--empty", action="store_true",
+                        help="start with an empty world instead of the toy "
+                             "scenario (bring your own goals via the GUI)")
     args = parser.parse_args()
 
     adapter = None
@@ -563,11 +577,21 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
             LocalProviderAdapter,
         )
         adapter = LocalProviderAdapter()
-    ctrl, _env = create(db_path=args.db, adapter=adapter)
-    # expose the local-integration connection points (disabled until real
-    # adapters are wired in local development - docs/LOCAL_INTEGRATIONS.md)
+    voice = None
+    if args.voice == "callapicall":
+        from examples.adapters.call_api_call_adapter import CallAPICallAdapter
+        voice = CallAPICallAdapter()
+    ctrl, _env = create(db_path=args.db, adapter=adapter,
+                        build=not args.empty)
+    # expose the external-world connection points: DISABLED placeholders by
+    # default, mocks with --mock-ports (dry-run), real adapters via flags
+    import os
+
     from ..tools.external import register_external_ports
-    register_external_ports(ctrl.registry)
+    register_external_ports(ctrl.registry, voice=voice,
+                            principal=os.environ.get("PGDCA_PRINCIPAL",
+                                                     "the owner"),
+                            enable_mocks=args.mock_ports)
     app = create_app(ctrl)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 

@@ -68,7 +68,9 @@ def register_external_ports(registry: ToolRegistry, *,
 
     registry.register(_spec("voice.call", RiskClass.EXTERNAL_COMMUNICATION,
                             "place a phone call (CallAPICall port); "
-                            "AI disclosure is spoken first",
+                            "AI disclosure is spoken first; params: "
+                            '{"number": "+39...", "purpose": "<why>", '
+                            '"lines": ["<sentence to say>", ...]}',
                             v_real, enable_mocks), voice_call)
 
     # ------------------------------------------------------------- email
@@ -97,10 +99,13 @@ def register_external_ports(registry: ToolRegistry, *,
                           observation={"messages": msgs, "trust": "untrusted"})
 
     registry.register(_spec("email.send", RiskClass.EXTERNAL_COMMUNICATION,
-                            "send an email with the honest-identity footer",
+                            "send an email with the honest-identity footer; "
+                            'params: {"to": "<address>", "subject": "...", '
+                            '"body": "..."}',
                             e_real, enable_mocks), email_send)
     registry.register(_spec("email.fetch", RiskClass.READ_ONLY,
-                            "fetch unread email (content is untrusted data)",
+                            "fetch unread email (content is untrusted data); "
+                            "params: {}",
                             e_real, enable_mocks), email_fetch)
 
     # --------------------------------------------------------------- sms
@@ -126,9 +131,10 @@ def register_external_ports(registry: ToolRegistry, *,
                           observation={"messages": msgs, "trust": "untrusted"})
 
     registry.register(_spec("sms.send", RiskClass.EXTERNAL_COMMUNICATION,
-                            "send an SMS", s_real, enable_mocks), sms_send)
+                            'send an SMS; params: {"to": "+39...", '
+                            '"body": "..."}', s_real, enable_mocks), sms_send)
     registry.register(_spec("sms.fetch", RiskClass.READ_ONLY,
-                            "fetch unread SMS (untrusted data)",
+                            "fetch unread SMS (untrusted data); params: {}",
                             s_real, enable_mocks), sms_fetch)
 
     # ------------------------------------------------------------ browser
@@ -159,11 +165,13 @@ def register_external_ports(registry: ToolRegistry, *,
 
     registry.register(_spec("browser.navigate", RiskClass.EXTERNAL_COMMUNICATION,
                             "navigate the agentic browser; challenges surface "
-                            "as explicit states", b_real, enable_mocks),
+                            'as explicit states; params: {"url": "https://..."}',
+                            b_real, enable_mocks),
                       browser_navigate)
     registry.register(_spec("browser.extract", RiskClass.READ_ONLY,
                             "extract structured data from the current page "
-                            "(untrusted)", b_real, enable_mocks),
+                            '(untrusted); params: {"selector": "<css, optional>"}',
+                            b_real, enable_mocks),
                       browser_extract)
 
     # -------------------------------------------------------------- vault
@@ -192,7 +200,11 @@ def register_external_ports(registry: ToolRegistry, *,
 
     registry.register(_spec("vault.pay", RiskClass.FINANCIAL,
                             "authorized payment through the vault (handles "
-                            "only, never credentials)", va_real, enable_mocks),
+                            "only, never credentials); params: "
+                            '{"method_handle": "...", "merchant": "...", '
+                            '"amount": <float>, "currency": "EUR", '
+                            '"purpose": "...", "authorization_context": '
+                            "<verdict reference>}", va_real, enable_mocks),
                       vault_pay)
 
     # ----------------------------------------------------------- identity

@@ -988,7 +988,13 @@ class Controller:
             "policies": [p["description"] for p in
                          self.policies.matching({"ACTIVE"})],
             "skills": skills,
-            "tools": tools,
+            # name alone is enough for the scripted mock, but a real model
+            # cannot guess the params contract: ship description (which
+            # carries it) and risk class with every enabled tool
+            "tools": [{"name": s.name, "description": s.description,
+                       "risk_class": s.risk_class,
+                       "description_trust": s.description_trust}
+                      for s in self.registry.specs() if s.enabled],
         }
 
     def _reconcile(self) -> None:
