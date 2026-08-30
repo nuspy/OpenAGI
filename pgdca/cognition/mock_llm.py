@@ -14,6 +14,8 @@ from .gateway import SCHEMA_VERSION
 from ..security.supervisor import RiskClass
 
 OFFER_RE = re.compile(r"OFFER\s+(\w+)\s+([\d.]+)")
+EDIT_RE = re.compile(
+    r"(importance|priority|substitutability|unit_cost)\s*(?:to|=|a)?\s*([\d.]+)")
 
 
 class MockLlmAdapter:
@@ -28,6 +30,8 @@ class MockLlmAdapter:
             return self._abstraction(ctx)
         if role == "strategies":
             return self._strategies(ctx)
+        if role == "deliberate":
+            return self._deliberate(ctx)
         return {"schema": SCHEMA_VERSION, "role": role or "unknown",
                 "summary": "no-op", "hypotheses": []}
 
@@ -158,6 +162,88 @@ class MockLlmAdapter:
                 "summary": f"{len(risks)} conflicts flagged",
                 "hypotheses": [], "assumptions": [], "risks": risks,
                 "missing_information": missing, "confidence": 0.85}
+
+    def _deliberate(self, ctx: dict) -> dict:
+        """Answer a human's question from the deterministic evidence
+        packet; numeric edit proposals in the question become structured
+        suggestions the human can apply by resolving as 'modified'."""
+        ev = ctx.get("evidence") or {}
+        subject = ctx.get("subject", {})
+        q = (ctx.get("question") or "").lower()
+        kind = subject.get("kind")
+        lines: list[str] = []
+        suggestions: list[dict] = []
+        if kind == "decision" and ev.get("what"):
+            v = ev.get("verdict") or {}
+            fid = (ev["what"].get("params") or {}).get("factor_id", "")
+            lines.append(f"Decision {subject.get('id')}: {ev['what']['action']}"
+                         f" {fid} -> verdict {v.get('status', '?')}.")
+            if ev.get("why"):
+                lines.append(f"Rationale: {ev['why']}")
+            alts = ev.get("alternatives_considered") or []
+            if alts:
+                lines.append("Ranked alternatives: " + "; ".join(
+                    f"{a['action_name']}({a['params'].get('factor_id', '')}) "
+                    f"U={a['utility']}" for a in alts[:3]))
+            cf = ev.get("counterfactual")
+            if cf:
+                lines.append(f"Counterfactual estimate: regret {cf['regret']}, "
+                             + ("avoidable." if cf["avoidable"]
+                                else "not avoidable (bad luck, not bad judgment)."))
+            ex = (ev.get("what_happened") or {}).get("execution")
+            if ex:
+                lines.append(f"Execution: {ex['status']}.")
+        elif kind == "node" and ev.get("node"):
+            n = ev["node"]
+            p = n["props"]
+            lines.append(f"{n['id']} ({n['kind']}): importance "
+                         f"{p.get('importance')}, unit_cost {p.get('unit_cost')},"
+                         f" acquired {p.get('acquired_qty', 0)}/"
+                         f"{p.get('quantity_needed', 1)}.")
+            goals = sorted((ev.get("goal_effects") or {}).keys())
+            lines.append("Contributes to goals: "
+                         + (", ".join(goals) if goals else "none known") + ".")
+            if ev.get("decisions"):
+                lines.append(f"{len(ev['decisions'])} recorded decision(s) "
+                             f"touched this node.")
+            m = EDIT_RE.search(q)
+            if m:
+                suggestions.append({
+                    "action_name": "suggest_edit",
+                    "params": {"node_id": n["id"],
+                               "props": {m.group(1): float(m.group(2))}},
+                    "rationale": "your proposal; apply it by resolving this "
+                                 "thread as 'modified'",
+                    "risk_class": "READ_ONLY"})
+                lines.append(f"You propose {m.group(1)}={m.group(2)}: recorded "
+                             f"as a suggestion; resolving as 'modified' "
+                             f"applies it with human provenance.")
+        elif kind == "strategy" and ev.get("steps") is not None:
+            lines.append(f"Strategy {ev['id']} '{ev['label']}': status "
+                         f"{ev['status']}, step "
+                         f"{min(ev['step_index'], len(ev['steps']))}/"
+                         f"{len(ev['steps'])}, score {ev['score']}. Resolving "
+                         f"as 'cancelled' defers it and forces a replan.")
+        elif kind == "escalation":
+            lines.append(f"{ev.get('reason', 'I escalated.')} I need a human "
+                         f"decision to proceed; budget remaining "
+                         f"{ev.get('budget_remaining')}.")
+        elif kind == "contradiction":
+            a, b = ev.get("claim_a", {}), ev.get("claim_b", {})
+            lines.append(f"Contradiction on {ev.get('subject')}."
+                         f"{ev.get('attribute')}: {a.get('value')} "
+                         f"({a.get('source')}) vs {b.get('value')} "
+                         f"({b.get('source')}); status {ev.get('status')}.")
+        elif kind == "guardrail":
+            lines.append(f"Guardrail {ev.get('id')} (tier {ev.get('tier')}, "
+                         f"{ev.get('flexibility')}): {ev.get('description')}; "
+                         f"status {ev.get('status')}.")
+        if not lines:
+            lines.append("No structured evidence is available for this subject.")
+        return {"schema": SCHEMA_VERSION, "role": "deliberate",
+                "summary": " ".join(lines), "hypotheses": suggestions,
+                "assumptions": [], "risks": [], "missing_information": [],
+                "confidence": 0.85}
 
     def _abstraction(self, ctx: dict) -> dict:
         feats = ctx.get("features", {})

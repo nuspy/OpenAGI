@@ -67,8 +67,30 @@ def test_node_edit_and_deliberation(client):
     r2 = c.post("/api/graph/nodes/boots", json={"props": {"importance": 0.7}},
                 headers={"X-Actor": "system"})
     assert r2.status_code == 403
-    d = c.post("/api/deliberation/node/boots", json={"question": "why?"})
-    assert d.status_code == 200 and "node" in d.json()
+    h = c.get("/api/nodes/boots/decisions")
+    assert h.status_code == 200 and "node" in h.json()
+    d = c.post("/api/deliberations", json={"subject_kind": "node",
+                                           "subject_id": "boots",
+                                           "question": "why?"})
+    assert d.status_code == 200
+    th = d.json()
+    assert th["messages"][0]["author"] == "human"
+    assert th["messages"][1]["author"] == "system"
+    assert "boots" in th["messages"][1]["text"]
+    sysopen = c.post("/api/deliberations", json={"subject_kind": "node",
+                                                 "subject_id": "boots",
+                                                 "question": "hi"},
+                     headers={"X-Actor": "system"})
+    assert sysopen.status_code == 403
+    rr = c.post(f"/api/deliberations/{th['id']}/reply", json={"text": "ok then"})
+    assert rr.status_code == 200 and len(rr.json()["messages"]) == 4
+    rs = c.post(f"/api/deliberations/{th['id']}/resolve",
+                json={"outcome": "confirmed", "note": "fine"})
+    assert rs.status_code == 200 and rs.json()["status"] == "RESOLVED"
+    again = c.post(f"/api/deliberations/{th['id']}/resolve",
+                   json={"outcome": "confirmed"})
+    assert again.status_code == 409
+    assert c.get("/api/deliberations").json()[0]["id"] == th["id"]
 
 
 def test_control_and_ui(client):

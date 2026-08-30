@@ -13,6 +13,8 @@ from enum import Enum
 
 from .arbitration import score_candidates
 from .cognition.gateway import Hypothesis, LlmGateway
+from .collaboration.deliberation import (DeliberationEngine,
+                                         DeliberationProjection)
 from .config import Config
 from .domain import (GOAL_KINDS, RATIFICATION_KINDS, NodeKind, NodeStatus,
                      RelType, node)
@@ -90,6 +92,11 @@ class Controller:
         self.evidence_store = runtime.register(EvidenceProjection())
         self.evidence = EvidenceManager(runtime, self.evidence_store)
         self.counterfactual = CounterfactualEngine(runtime)
+        self.deliberations = runtime.register(DeliberationProjection())
+        self.deliberation = DeliberationEngine(
+            runtime, self.deliberations, self.gateway, self.journal,
+            self.graph, self.strategies, self.guardrails, self.evidence_store,
+            self.config)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -142,7 +149,7 @@ class Controller:
         import json as _json
         import re as _re
         counters: dict[str, int] = {}
-        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal|str)_)(\d+)"')
+        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal|str|del)_)(\d+)"')
         last_cycle = 0
         last_control: str | None = None
         for ev in events:
@@ -331,6 +338,88 @@ class Controller:
                            "result": result.observation}, Actor.HUMAN)
         return True
 
+    # --------------------------------------------------------- deliberation
+    def open_deliberation(self, subject_kind: str, subject_id: str,
+                          question: str, actor: Actor = Actor.HUMAN) -> dict:
+        return self.deliberation.open(subject_kind, subject_id, question, actor)
+
+    def reply_deliberation(self, thread_id: str, text: str,
+                           actor: Actor = Actor.HUMAN) -> dict:
+        return self.deliberation.reply(thread_id, text, actor)
+
+    def resolve_deliberation(self, thread_id: str, outcome: str,
+                             note: str = "", changes: dict | None = None,
+                             actor: Actor = Actor.HUMAN) -> dict:
+        """Close a thread with a binding outcome. 'confirmed' records
+        agreement; 'modified' applies the agreed node edits with human
+        provenance; 'cancelled' denies a pending decision, revokes an
+        executed one (compensation path), or defers an active strategy
+        (replan next cycle). Contested decision classes leave a dissent
+        mark on their context signature for future advisories."""
+        if actor != Actor.HUMAN:
+            raise PermissionError("deliberation outcomes are decided by the human")
+        th = self.deliberations.threads.get(thread_id)
+        if th is None:
+            raise KeyError(thread_id)
+        if th["status"] != "OPEN":
+            raise ValueError(f"thread {thread_id} is already resolved")
+        if outcome not in ("confirmed", "modified", "cancelled"):
+            raise ValueError(f"unknown outcome '{outcome}'")
+        subject = th["subject"]
+        effects: list[dict] = []
+        if outcome == "modified" and changes:
+            node_id = changes.get("node_id")
+            props = changes.get("props") or {}
+            if node_id and props:
+                self.human_edit_node(node_id, props, actor)
+                effects.append({"type": "node_edited", "node_id": node_id,
+                                "props": props})
+        if outcome == "cancelled" and subject["kind"] == "decision":
+            rec = self.journal.records.get(subject["id"])
+            if (self._pending is not None
+                    and self._pending["decision"].id == subject["id"]):
+                self.resolve_pending(False, note or "cancelled in deliberation")
+                effects.append({"type": "pending_denied"})
+            elif rec and rec.get("execution") and rec.get("verdict"):
+                out = self.override_verdict(rec["verdict"]["id"], approve=False,
+                                            note=note or "cancelled in deliberation")
+                effects.append({"type": "revoked",
+                                "compensated": bool(out.get("compensated"))})
+        if outcome == "cancelled" and subject["kind"] == "strategy":
+            b = self.strategies.branches.get(subject["id"])
+            if b is not None and b["status"] == "ACTIVE":
+                self.runtime.emit(Ev.STRATEGY_CHANGED,
+                                  {"branch_id": b["id"],
+                                   "reason": "human cancelled the branch in "
+                                             "deliberation; replan next cycle"},
+                                  Actor.HUMAN)
+                effects.append({"type": "strategy_deferred",
+                                "branch_id": b["id"]})
+        resolution = {"outcome": outcome, "note": note, "effects": effects}
+        if subject["kind"] == "decision" and outcome in ("cancelled", "modified"):
+            sig = self._decision_signature(subject["id"])
+            if sig is not None:
+                resolution["signature"] = sig
+        return self.deliberation.record_resolution(thread_id, resolution, actor)
+
+    def _decision_signature(self, decision_id: str) -> str | None:
+        """Context signature of a journaled decision - from its audit when
+        available, else recomputed with the audit's feature formulas."""
+        rec = self.journal.records.get(decision_id)
+        if rec is None:
+            return None
+        feats = (rec.get("audit") or {}).get("features")
+        if feats is None:
+            d = rec["decision"]
+            fsnap = {}
+            fid = d["params"].get("factor_id")
+            if fid and self.graph.node(fid):
+                p = self.graph.node(fid)["props"]
+                fsnap = {"importance": p.get("importance"),
+                         "substitutability": p.get("substitutability")}
+            feats = self._features_preview(d["action_name"], d["params"], fsnap)
+        return PolicyProjection.signature(feats)
+
     # ------------------------------------------------------------ the loop
     def run(self, max_cycles: int | None = None) -> list[CycleResult]:
         results = []
@@ -405,13 +494,7 @@ class Controller:
             h.success_prob = self.self_model.calibrated_success(
                 h.params.get("domain", "general"), h.action_name, h.success_prob)
         if not hyps:
-            self.runtime.emit(Ev.HUMAN_ESCALATION,
-                              {"reason": "no viable hypotheses for open targets"},
-                              Actor.SYSTEM)
-            self.runtime.emit(Ev.CYCLE_COMPLETED,
-                              {"cycle": self.cycle, "escalated": True}, Actor.SYSTEM)
-            self._set_state(SysState.ESCALATED)
-            return CycleResult(self.cycle, "escalated")
+            return self._escalate("no viable hypotheses for open targets")
 
         antagonisms = []
         for fid in sorted({h.params.get("factor_id") for h in hyps if h.params.get("factor_id")}):
@@ -453,14 +536,8 @@ class Controller:
             if research is not None:
                 selected = research
             else:
-                self.runtime.emit(Ev.HUMAN_ESCALATION,
-                                  {"reason": "decision unstable under uncertainty; "
-                                             "no information-gain action available"},
-                                  Actor.SYSTEM)
-                self.runtime.emit(Ev.CYCLE_COMPLETED,
-                                  {"cycle": self.cycle, "escalated": True}, Actor.SYSTEM)
-                self._set_state(SysState.ESCALATED)
-                return CycleResult(self.cycle, "escalated")
+                return self._escalate("decision unstable under uncertainty; "
+                                      "no information-gain action available")
 
         decision = self._to_decision(selected.hyp)
         fsnap = {}
@@ -494,11 +571,13 @@ class Controller:
         # signature become an advisory on the verdict (spec: Auditor Agent
         # and Behavioral Recurrence)
         advisories = []
-        preview = self._features_preview(decision, fsnap)
-        adv = self.self_model.recurrence_advisory(
-            PolicyProjection.signature(preview))
-        if adv:
-            advisories.append(adv)
+        preview = self._features_preview(decision.action_name, decision.params,
+                                         fsnap)
+        sig = PolicyProjection.signature(preview)
+        for adv in (self.self_model.recurrence_advisory(sig),
+                    self.self_model.dissent_advisory(sig)):
+            if adv:
+                advisories.append(adv)
 
         # deterministic authority: the supervisor rules before anything runs
         verdict = self.supervisor.evaluate(decision, self.cycle,
@@ -525,17 +604,31 @@ class Controller:
         return result
 
     # -------------------------------------------------------- helpers
-    def _features_preview(self, decision: ProposedDecision, fsnap: dict) -> dict:
+    def _escalate(self, reason: str) -> CycleResult:
+        """Escalations are bidirectional deliberation: the packet becomes
+        a system-opened discussion thread the human can answer in place."""
+        self.runtime.emit(Ev.HUMAN_ESCALATION, {"reason": reason}, Actor.SYSTEM)
+        self.deliberation.open_system(reason, {
+            "reason": reason, "cycle": self.cycle,
+            "budget_remaining": self.budgets.remaining("money"),
+            "open_targets": [t["id"] for t in self.graph.open_targets()]})
+        self.runtime.emit(Ev.CYCLE_COMPLETED,
+                          {"cycle": self.cycle, "escalated": True}, Actor.SYSTEM)
+        self._set_state(SysState.ESCALATED)
+        return CycleResult(self.cycle, "escalated")
+
+    def _features_preview(self, action_name: str, params: dict,
+                          fsnap: dict) -> dict:
         """Same feature formulas the audit uses, computed at decision time
         for behavioral-recurrence lookup."""
         limit = self.budgets.limit("money") or 1.0
         remaining = self.budgets.remaining("money")
-        cost = float(decision.params.get("total_cost", 0.0))
+        cost = float(params.get("total_cost", 0.0))
         imp = fsnap.get("importance")
         sub = fsnap.get("substitutability")
         return {
-            "action": decision.action_name,
-            "domain": decision.params.get("domain", "general"),
+            "action": action_name,
+            "domain": params.get("domain", "general"),
             "budget_constrained": (remaining - cost) < 0.5 * limit,
             "picked_high_importance_low_subst": (
                 float(imp or 0.0) >= 0.7

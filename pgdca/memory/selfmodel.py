@@ -43,6 +43,16 @@ class SelfModelProjection:
                 s["failure"] += 1
             else:
                 s["success"] += 1
+        elif t == Ev.DELIBERATION_RESOLVED.value:
+            # contested decision classes are remembered: a human who
+            # cancelled or modified a decision in deliberation leaves a
+            # dissent mark on its context signature
+            res = p.get("resolution") or {}
+            sig = res.get("signature")
+            if sig and res.get("outcome") in ("cancelled", "modified"):
+                s = self.signature_outcomes.setdefault(
+                    sig, {"success": 0, "failure": 0})
+                s["dissent"] = s.get("dissent", 0) + 1
         elif t == Ev.HUMAN_ESCALATION.value:
             self.escalations += 1
 
@@ -69,6 +79,13 @@ class SelfModelProjection:
             return (f"this decision resembles {r['failure']} previously failed "
                     f"episodes (vs {r['success']} successes) with the same "
                     f"context signature")
+        return None
+
+    def dissent_advisory(self, signature: str) -> str | None:
+        d = self.recurrence(signature).get("dissent", 0)
+        if d >= self.config.dissent_advisory_threshold:
+            return (f"the human contested {d} similar decision(s) in "
+                    f"deliberation (revoked or modified after discussion)")
         return None
 
     def snapshot(self) -> dict:

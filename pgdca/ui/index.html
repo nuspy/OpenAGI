@@ -59,6 +59,12 @@
   form.gr input,form.gr select,form.gr textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:6px;margin:2px 0 8px;font:13px system-ui}
   #events{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
   #events div{padding:2px 0;border-bottom:1px dashed var(--line)}
+  .msg{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:6px 0;background:#f8fafc}
+  .msg.human{background:#eef2ff;border-color:#c7d2fe}
+  .msg.system{background:#f0fdf4;border-color:#bbf7d0}
+  .msg .author{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  tr.sel td{background:#eef2ff}
+  #threadview input{border:1px solid var(--line);border-radius:6px;padding:6px;font:13px system-ui}
 </style>
 </head>
 <body>
@@ -82,6 +88,7 @@
 <nav id="tabs">
   <button data-tab="graph" class="active">Graph</button>
   <button data-tab="inbox">Decision inbox <span id="pcount" class="count" hidden>0</span></button>
+  <button data-tab="deliberation">Deliberation <span id="dcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails">Guardrails</button>
   <button data-tab="capabilities">Capabilities</button>
   <button data-tab="journal">Journal</button>
@@ -100,6 +107,14 @@
   <div class="grid2">
     <div><h3>Pending — your decision is required</h3><div id="pending"></div></div>
     <div><h3>Recent verdicts <span class="muted">(override in either direction)</span></h3><div id="recent"></div></div>
+  </div>
+</main>
+
+<main id="tab-deliberation">
+  <div class="grid2">
+    <div class="panel"><h3>Discussion threads <span class="muted">(the system opens threads on escalations; you can open one from any node, decision, strategy or contradiction)</span></h3>
+      <table id="threadlist"></table></div>
+    <div class="panel" id="threadview"><p class="muted">Select a thread.</p></div>
   </div>
 </main>
 
@@ -153,15 +168,17 @@
 <script>
 const $=s=>document.querySelector(s);
 const dlg=$('#dlg');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=(p,opt)=>fetch('/api'+p,opt).then(r=>{if(!r.ok)return r.json().then(e=>Promise.reject(e.detail||r.status));return r.json()});
 const post=(p,body)=>api(p,{method:'POST',headers:{'Content-Type':'application/json','X-Actor':'human'},body:JSON.stringify(body||{})});
-let selected=null, lastSeq=0;
+let selected=null, selectedThread=null, lastSeq=0;
 
 /* ---------------- tabs ---------------- */
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
-  document.querySelectorAll('main').forEach(m=>m.classList.toggle('active',m.id==='tab-'+b.dataset.tab));
-});
+function showTab(name){
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
+  document.querySelectorAll('main').forEach(m=>m.classList.toggle('active',m.id==='tab-'+name));
+}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 
 /* ---------------- header / control ---------------- */
 async function control(c){await post('/control/'+c).catch(alert);refresh()}
@@ -239,7 +256,8 @@ async function selectNode(id){
     `<li>${e.src===id?'→':'←'} <b style="color:${RELCOLOR(e.type)}">${e.type}</b> ${e.src===id?e.dst:e.src}
      <span class="muted">(imp ${e.attrs.importance??'–'}, conf ${e.attrs.confidence??'–'}, ${e.validation_status})</span></li>`).join('')+`</ul>
     <p><button class="primary" onclick="saveNode('${id}')">Save edits</button>
-       <button onclick="discussNode('${id}')">Discuss with the system</button></p>
+       <button onclick="openThread('node','${id}')">Discuss with the system</button>
+       <button onclick="nodeHistory('${id}')">Decision history</button></p>
     <p class="muted" style="font-size:12px">Manual edits become HUMAN_EDIT events in the journal.</p>`;
   $('#detail').innerHTML=html;
 }
@@ -253,12 +271,75 @@ async function saveNode(id){
   selectNode(id);
 }
 
-async function discussNode(id){
-  const d=await post('/deliberation/node/'+id,{question:'why?'});
-  let html=`<h3>Deliberation — ${id}</h3>`;
+async function nodeHistory(id){
+  const d=await api('/nodes/'+id+'/decisions').catch(alert);
+  if(!d)return;
+  let html=`<h3>Decision history — ${id}</h3>`;
   if(!d.decisions.length)html+='<p class="muted">No decisions touched this node yet.</p>';
   d.decisions.forEach(p=>{ if(p) html+=renderRationale(p); });
   $('#dlgbody').innerHTML=html; dlg.showModal();
+}
+
+/* ---------------- deliberation ---------------- */
+async function openThread(kind,id){
+  const q=prompt('Question for the system about '+kind+' '+id,'why?');
+  if(q===null)return;
+  const th=await post('/deliberations',{subject_kind:kind,subject_id:id,question:q}).catch(e=>{alert(e);return null});
+  if(!th)return;
+  selectedThread=th.id;
+  if(dlg.open)dlg.close();
+  showTab('deliberation'); refresh();
+}
+function viewThread(id){selectedThread=id;refresh()}
+async function replyThread(id){
+  const t=$('#reply-text').value.trim(); if(!t)return;
+  await post('/deliberations/'+id+'/reply',{text:t}).catch(alert); refresh();
+}
+async function resolveThread(id,outcome){
+  const note=prompt('Note for the resolution ('+outcome+')','')??'';
+  await post('/deliberations/'+id+'/resolve',{outcome,note}).catch(alert); refresh();
+}
+async function applySuggestion(id,paramsJson){
+  const p=JSON.parse(paramsJson);
+  await post('/deliberations/'+id+'/resolve',
+             {outcome:'modified',note:'suggestion applied via GUI',
+              changes:{node_id:p.node_id,props:p.props}}).catch(alert);
+  refresh();
+}
+function renderThreadList(ths){
+  $('#threadlist').innerHTML='<tr><th>id</th><th>subject</th><th>opened by</th><th>status</th><th></th></tr>'+
+    (ths.slice().reverse().map(t=>`<tr${selectedThread===t.id?' class="sel"':''}>
+      <td class="mono">${t.id}</td>
+      <td>${t.subject.kind} <span class="mono">${t.subject.id}</span></td>
+      <td>${t.opened_by}</td>
+      <td><span class="pill ${t.status==='OPEN'?'PENDING_HUMAN':'ACTIVE'}">${t.status}${t.resolution?' · '+t.resolution.outcome:''}</span></td>
+      <td><button onclick="viewThread('${t.id}')">Open</button></td></tr>`).join('')
+     ||'<tr><td class="muted" colspan="5">no discussions yet</td></tr>');
+}
+function renderThreadView(t){
+  if(!t){$('#threadview').innerHTML='<p class="muted">Select a thread.</p>';return}
+  let h=`<h3>${t.id} — ${t.subject.kind} <span class="mono">${t.subject.id}</span>
+    <span class="pill ${t.status==='OPEN'?'PENDING_HUMAN':'ACTIVE'}">${t.status}</span>
+    <span class="muted">opened by ${t.opened_by}, cycle ${t.cycle??'–'}</span></h3>`;
+  h+=t.messages.map(m=>`<div class="msg ${m.author}"><div class="author">${m.author}</div>
+      <div>${esc(m.text)}</div>
+      ${m.packet?`<pre>${esc(JSON.stringify(m.packet,null,1))}</pre>`:''}
+      ${(m.suggestions||[]).map(s=>`<div class="card">suggested edit: <span class="mono">${esc(JSON.stringify(s.params))}</span><br>
+        <span class="muted">${esc(s.rationale||'')}</span>
+        ${t.status==='OPEN'?`<br><button class="ok" onclick='applySuggestion("${t.id}",${JSON.stringify(JSON.stringify(s.params))})'>Apply &amp; resolve as modified</button>`:''}</div>`).join('')}
+    </div>`).join('');
+  if(t.status==='OPEN'){
+    h+=`<p><input id="reply-text" placeholder="Reply to the system…" style="width:62%">
+        <button onclick="replyThread('${t.id}')">Reply</button></p>
+      <p><button class="ok" onclick="resolveThread('${t.id}','confirmed')">Confirm</button>
+         <button class="danger" onclick="resolveThread('${t.id}','cancelled')">Cancel / revoke subject</button></p>
+      <p class="muted" style="font-size:12px">Cancelling a pending decision denies it; an executed one is revoked and compensated when a
+      compensation tool exists; an active strategy is deferred for replan. Outcomes are events and feed future advisories.</p>`;
+  }else{
+    h+=`<p class="muted">Resolved: <b>${t.resolution.outcome}</b> ${esc(t.resolution.note||'')}
+        ${(t.resolution.effects||[]).length?`· effects <span class="mono">${esc(JSON.stringify(t.resolution.effects))}</span>`:''}</p>`;
+  }
+  $('#threadview').innerHTML=h;
 }
 
 /* ---------------- inbox ---------------- */
@@ -295,6 +376,7 @@ function renderRationale(p){
       U=${p.counterfactual.best_alternative.ex_ante_utility} · regret ${p.counterfactual.regret}
       · ${p.counterfactual.avoidable?'<span style="color:var(--bad)">avoidable</span>':'not avoidable (bad luck, not bad judgment)'}</div>`:''}
     ${p.compensation?`<div><b>Compensated:</b> ${JSON.stringify(p.compensation.result)}</div>`:''}
+    <p style="margin:6px 0 0"><button onclick="openThread('decision','${p.decision_id}')">Discuss this decision</button></p>
   </div>`;
 }
 async function showRationale(id){
@@ -381,12 +463,13 @@ async function refresh(){
         <td><span class="pill ${t.enabled?'ACTIVE':'DISABLED'}">${t.enabled?'ACTIVE':'DISABLED'}</span></td></tr>`).join('');
 
     const strats=await api('/strategies');
-    $('#strategies').innerHTML='<tr><th>id</th><th>label</th><th>status</th><th>step</th><th>score</th></tr>'+
+    $('#strategies').innerHTML='<tr><th>id</th><th>label</th><th>status</th><th>step</th><th>score</th><th></th></tr>'+
       (strats.map(b=>`<tr><td class="mono">${b.id}</td><td>${b.label}</td>
         <td><span class="pill ${b.status}">${b.status}</span></td>
         <td>${Math.min(b.step_index,b.steps.length)}/${b.steps.length}
             <span class="muted">${b.steps.map(s=>(s.action_name==='research_price'?'r:':'b:')+s.factor_id).join(' → ')}</span></td>
-        <td>${b.score}</td></tr>`).join('')||'<tr><td class="muted" colspan="5">no strategies yet</td></tr>');
+        <td>${b.score}</td>
+        <td><button onclick="openThread('strategy','${b.id}')">Discuss</button></td></tr>`).join('')||'<tr><td class="muted" colspan="6">no strategies yet</td></tr>');
 
     const sm=await api('/selfmodel');
     $('#selfmodel').innerHTML='<tr><th>domain/action</th><th>attempts</th><th>observed rate</th></tr>'+
@@ -394,12 +477,13 @@ async function refresh(){
         <td>${v.observed_rate??'—'}</td></tr>`).join('')||'<tr><td class="muted" colspan="3">no history yet</td></tr>')+
       (Object.keys(sm.calibration||{}).length?`<tr><td class="muted">Brier per domain</td><td colspan="2" class="mono">${JSON.stringify(sm.calibration)}</td></tr>`:'');
     const evd=await api('/evidence');
-    $('#contradictions').innerHTML='<tr><th>subject</th><th>external claim</th><th>observed</th><th>status</th></tr>'+
+    $('#contradictions').innerHTML='<tr><th>subject</th><th>external claim</th><th>observed</th><th>status</th><th></th></tr>'+
       (evd.contradictions.map(c=>`<tr><td class="mono">${c.subject}.${c.attribute}</td>
         <td>${c.claim_a.value} <span class="muted">(${c.claim_a.source})</span></td>
         <td>${c.claim_b.value} <span class="muted">(${c.claim_b.source})</span></td>
-        <td><span class="pill ${c.status==='RESOLVED_B'?'ACTIVE':'PENDING_HUMAN'}">${c.status}</span></td></tr>`).join('')
-       ||'<tr><td class="muted" colspan="4">no contradictions detected</td></tr>');
+        <td><span class="pill ${c.status==='RESOLVED_B'?'ACTIVE':'PENDING_HUMAN'}">${c.status}</span></td>
+        <td><button onclick="openThread('contradiction','${c.id}')">Discuss</button></td></tr>`).join('')
+       ||'<tr><td class="muted" colspan="5">no contradictions detected</td></tr>');
 
     const pols=await api('/policies');
     $('#policies').innerHTML='<tr><th>id</th><th>description</th><th>status</th><th>evidence</th><th>agreements</th><th>origin</th></tr>'+
@@ -407,20 +491,36 @@ async function refresh(){
         <td><span class="pill ${p.status}">${p.status}</span></td>
         <td>${p.evidence_count}</td><td>${p.agreements}</td><td class="muted">${p.provenance}</td></tr>`).join('');
 
-    const evs=await api('/events?after='+lastSeq);
-    if(evs.length){
-      lastSeq=evs[evs.length-1].seq;
-      const box=$('#events');
-      evs.forEach(e=>{
-        const d=document.createElement('div');
-        d.textContent=`#${e.seq} c${e.cycle??'–'} [${e.actor}] ${e.type} ${JSON.stringify(e.payload).slice(0,140)}`;
-        box.prepend(d);
-      });
-      while(box.children.length>250)box.lastChild.remove();
-    }
+    const dels=await api('/deliberations');
+    const openThreads=dels.filter(t=>t.status==='OPEN');
+    $('#dcount').hidden=!openThreads.length; $('#dcount').textContent=openThreads.length;
+    renderThreadList(dels);
+    renderThreadView(dels.find(t=>t.id===selectedThread)||null);
+
+    (await api('/events?after='+lastSeq)).forEach(pushEvent);
   }catch(err){ $('#state').textContent='offline'; $('#state').className='badge STOPPED'; }
 }
-refresh(); setInterval(refresh,1500);
+
+/* ---------------- live events (SSE with polling safety net) ---------------- */
+function pushEvent(e){
+  if(e.seq<=lastSeq&&lastSeq!==0)return;   // both the stream and the poll feed this
+  lastSeq=e.seq;
+  const box=$('#events');
+  const d=document.createElement('div');
+  d.textContent=`#${e.seq} c${e.cycle??'–'} [${e.actor}] ${e.type} ${JSON.stringify(e.payload).slice(0,140)}`;
+  box.prepend(d);
+  while(box.children.length>250)box.lastChild.remove();
+}
+let refreshTimer=null;
+function scheduleRefresh(){ if(refreshTimer)return; refreshTimer=setTimeout(()=>{refreshTimer=null;refresh()},250); }
+function startStream(){
+  if(!window.EventSource)return;
+  const es=new EventSource('/api/events/stream?after='+lastSeq);
+  es.onmessage=m=>{try{pushEvent(JSON.parse(m.data));scheduleRefresh();}catch(e){}};
+  es.onerror=()=>{es.close();setTimeout(startStream,3000);};
+}
+refresh().then(startStream);
+setInterval(refresh,5000);
 </script>
 </body>
 </html>

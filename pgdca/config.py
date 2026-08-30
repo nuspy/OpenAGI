@@ -36,6 +36,10 @@ class Config:
     # --- self-model: calibrated success priors (claims shrink toward observation) ---
     calibration_pseudo_count: int = 3     # weight of the LLM's claimed probability
     recurrence_failure_threshold: int = 2  # past failures before an advisory fires
+    dissent_advisory_threshold: int = 1   # human deliberation dissents before an advisory fires
+
+    # --- deliberation (human-AI co-decision threads) ---
+    deliberation_history_window: int = 6  # recent messages passed to the gateway
 
     # --- macro-cycle maintenance ---
     macro_interval_cycles: int = 10       # full-sweep maintenance cadence

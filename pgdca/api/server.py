@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..controller import Controller
 from ..domain import NodeKind
-from ..events import Actor, Ev
+from ..events import Actor
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 
@@ -41,6 +41,8 @@ def create_app(ctrl: Controller) -> FastAPI:
             raise HTTPException(403, str(exc))
         except KeyError as exc:
             raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
 
     # ------------------------------------------------------------- reads
     @app.get("/api/state")
@@ -125,30 +127,36 @@ def create_app(ctrl: Controller) -> FastAPI:
         return [e.to_dict() for e in evs]
 
     # ------------------------------------------------------ deliberation
-    @app.post("/api/deliberation/node/{node_id}")
-    def deliberate_node(node_id: str, body: dict = Body(default={})):
-        ctrl.runtime.emit(Ev.DELIBERATION_OPENED,
-                          {"target": node_id, "question": body.get("question", "")},
-                          Actor.HUMAN)
-        packets = ctrl.journal.for_node(node_id)
-        node = ctrl.graph.node(node_id)
-        answer = {"node": node, "decisions": packets}
-        ctrl.runtime.emit(Ev.DELIBERATION_RESOLVED,
-                          {"target": node_id, "decisions": len(packets)},
-                          Actor.SYSTEM)
-        return answer
+    @app.get("/api/deliberations")
+    def deliberations():
+        return ctrl.deliberations.snapshot()
 
-    @app.post("/api/deliberation/decision/{decision_id}")
-    def deliberate_decision(decision_id: str, body: dict = Body(default={})):
-        ctrl.runtime.emit(Ev.DELIBERATION_OPENED,
-                          {"target": decision_id, "question": body.get("question", "")},
-                          Actor.HUMAN)
-        r = ctrl.journal.rationale(decision_id)
-        if r is None:
-            raise HTTPException(404, decision_id)
-        ctrl.runtime.emit(Ev.DELIBERATION_RESOLVED, {"target": decision_id},
-                          Actor.SYSTEM)
-        return r
+    @app.post("/api/deliberations")
+    def open_deliberation(body: dict = Body(...),
+                          x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.open_deliberation(
+            body.get("subject_kind", ""), body.get("subject_id", ""),
+            body.get("question", ""), _actor(x_actor)))
+
+    @app.post("/api/deliberations/{thread_id}/reply")
+    def reply_deliberation(thread_id: str, body: dict = Body(...),
+                           x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.reply_deliberation(
+            thread_id, body.get("text", ""), _actor(x_actor)))
+
+    @app.post("/api/deliberations/{thread_id}/resolve")
+    def resolve_deliberation(thread_id: str, body: dict = Body(...),
+                             x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.resolve_deliberation(
+            thread_id, body.get("outcome", ""), body.get("note", ""),
+            body.get("changes"), _actor(x_actor)))
+
+    @app.get("/api/nodes/{node_id}/decisions")
+    def node_decisions(node_id: str):
+        node = ctrl.graph.node(node_id)
+        if node is None:
+            raise HTTPException(404, node_id)
+        return {"node": node, "decisions": ctrl.journal.for_node(node_id)}
 
     # ----------------------------------------------------------- writes
     @app.post("/api/graph/nodes/{node_id}")
