@@ -1,7 +1,7 @@
 # PGDCA — Analisi critica e proposte di modifica
 
 **Documenti analizzati**: `PGDCA_Scientific_Paper.docx` (v1.0), `PGDCA_Cognitive_Architecture_Design_Rationale.md` (v1.0), `PGDCA_Cloud_Code_Implementation_Spec.md` (v1.0) — tutti datati 30 agosto 2026.
-**Stato del documento**: in discussione, item per item.
+**Stato del documento**: decisioni registrate il 30/08/2026 — revisione v1.1 applicata ai documenti (M21 e M22 respinte, non applicate; il paper porta le modifiche come tracked changes da accettare/rifiutare in Word).
 **Processo**: ogni voce Mx viene approvata, discussa fino al consenso o respinta; la tabella di stato qui sotto viene aggiornata a ogni decisione; le voci approvate vengono poi applicate ai tre documenti (i `.md` con edit diretti, il paper `.docx` con *tracked changes* revisionabili in Word).
 
 ---
@@ -10,37 +10,42 @@
 
 | ID | Titolo | Priorità | Origine | Stato | Documenti target |
 |----|--------|----------|---------|-------|------------------|
-| M1 | Governance dei goal + corrigibilità | P0 | analisi | PROPOSTA | Spec, Rationale, Paper |
-| M2 | Difesa da prompt injection | P0 | analisi | PROPOSTA | Spec, Rationale, Paper |
-| M3 | Budget di autonomia consolidati | P0 | analisi | PROPOSTA | Spec, Paper |
-| M4 | Fette verticali + scala di milestone | P0 | analisi | PROPOSTA | Spec, Rationale |
-| M5 | Event sourcing, consistenza e replay | P1 | analisi | PROPOSTA | Spec |
-| M6 | Disciplina di scoring calibrato | P1 | analisi | PROPOSTA | Spec |
-| M7 | Guardrail sul grafo causale | P1 | analisi | PROPOSTA | Spec, Rationale |
-| M8 | Guardrail sul policy learning | P1 | analisi | PROPOSTA | Spec |
-| M9 | Cold start e curriculum | P1 | analisi | PROPOSTA | Spec |
-| M10 | Sicurezza nell'acquisizione di tool | P1 | analisi | PROPOSTA | Spec |
-| M11 | Compliance e privacy | P1 | analisi | PROPOSTA | Spec, Paper |
-| M12 | Riconciliazione incrementale | P2 | analisi | PROPOSTA | Spec |
-| M13 | Hardening del LLM gateway | P2 | analisi | PROPOSTA | Spec |
-| M14 | Schema canonico unificato | P2 | analisi | PROPOSTA | tutti |
-| M15 | Gerarchia come ruoli | P2 | analisi | PROPOSTA | Spec, Rationale |
-| M16 | Principio sostitutivo/complementare | P2 | analisi | PROPOSTA | tutti |
-| M17 | Igiene della memoria | P2 | analisi | PROPOSTA | Spec |
+| M1 | Governance dei goal + corrigibilità | P0 | analisi | APPROVATA | Spec, Rationale, Paper |
+| M2 | Difesa da prompt injection | P0 | analisi | APPROVATA | Spec, Rationale, Paper |
+| M3 | Budget di autonomia consolidati | P0 | analisi | APPROVATA | Spec, Paper |
+| M4 | Fette verticali + scala di milestone | P0 | analisi | APPROVATA | Spec, Rationale |
+| M5 | Event sourcing, consistenza e replay | P1 | analisi | APPROVATA | Spec |
+| M6 | Disciplina di scoring calibrato | P1 | analisi | APPROVATA | Spec |
+| M7 | Guardrail sul grafo causale | P1 | analisi | APPROVATA | Spec, Rationale |
+| M8 | Guardrail sul policy learning | P1 | analisi | APPROVATA | Spec |
+| M9 | Cold start e curriculum | P1 | analisi | APPROVATA | Spec |
+| M10 | Sicurezza nell'acquisizione di tool | P1 | analisi | APPROVATA | Spec |
+| M11 | Compliance e privacy | P1 | analisi | APPROVATA | Spec, Paper |
+| M12 | Riconciliazione incrementale | P2 | analisi | APPROVATA | Spec |
+| M13 | Hardening del LLM gateway | P2 | analisi | APPROVATA | Spec |
+| M14 | Schema canonico unificato | P2 | analisi | APPROVATA | tutti |
+| M15 | Gerarchia come ruoli | P2 | analisi | APPROVATA | Spec, Rationale |
+| M16 | Principio sostitutivo/complementare | P2 | analisi | APPROVATA | tutti |
+| M17 | Igiene della memoria | P2 | analisi | APPROVATA | Spec |
 | M18 | Operator console | — | analisi | ASSORBITA in M25 | — |
-| M19 | Related work e riposizionamento | P1 | analisi | PROPOSTA | Paper |
-| M20 | Valutazione operazionalizzata | P1 | analisi | PROPOSTA | Paper |
-| M21 | SGI ridimensionata | P2 | analisi | PROPOSTA | Paper |
-| M22 | Consistenza e refusi | P3 | analisi | PROPOSTA | tutti |
-| M23 | Guardrail a due livelli | P0 | utente (rev. 2) | REQUISITO | Spec, Rationale |
+| M19 | Related work e riposizionamento | P1 | analisi | APPROVATA | Paper |
+| M20 | Valutazione operazionalizzata | P1 | analisi | APPROVATA | Paper |
+| M21 | SGI ridimensionata | P2 | analisi | RESPINTA | — |
+| M22 | Consistenza e refusi | P3 | analisi | RESPINTA | — |
+| M23 | Guardrail a due livelli | P0 | utente (rev. 2) | REQUISITO — asimmetria confermata | Spec, Rationale |
 | M24 | Decision Supervisor | P0 | utente (rev. 2) | REQUISITO | Spec, Paper |
 | M25 | GUI completa, frontend separato | P0 | utente (rev. 2) | REQUISITO | Spec, Rationale |
 | M26 | Tool esterni interface-first | P1 | utente (rev. 2) | REQUISITO | Spec |
 | M27 | Co-decisione in itinere | P1 | utente (rev. 2) | REQUISITO | Spec |
+| M28 | Skills e MCP server importabili | P1 | utente (rev. 3) | REQUISITO | Spec, Rationale |
 
 Priorità: **P0** = da risolvere prima di iniziare l'implementazione · **P1** = prima revisione dei documenti · **P2** = seconda passata · **P3** = cosmetica.
 
-Le voci M23–M27 recepiscono i requisiti espressi dall'utente nella revisione del piano: sono requisiti da specificare nei documenti, non proposte da approvare; restano da discutere solo i dettagli interni espressamente segnalati.
+Le voci M23–M28 recepiscono i requisiti espressi dall'utente: sono requisiti da specificare nei documenti, non proposte da approvare.
+
+**Registro delle decisioni (30/08/2026)**: approvate M1–M17 e M19–M20; respinte M21 e M22 (la sezione SGI e le denominazioni restano come in v1.0); confermata l'attivazione asimmetrica dei guardrail Tier 2 (M23); aggiunto il requisito M28 (skills e MCP server importabili).
+
+*Nota sulla numerazione*: i riferimenti "§N" nelle proposte usano la numerazione **v1.0** dei documenti; nella v1.1 la numerazione è scalata per l'inserimento delle nuove sezioni.
 
 ---
 
@@ -234,6 +239,13 @@ Ogni integrazione esterna è definita da una *porta* (contratto tipizzato) con i
 Componente "Deliberation" (in collaboration/): l'umano può aprire in qualsiasi momento una decisione, una strategia o un nodo del grafo e ridiscuterla con il sistema; il sistema risponde con il rationale ricostruito dal journal (evidenze, alternative considerate, stime, policy applicate); l'esito — conferma, modifica, annullamento — è un evento che può innescare replanning. Bidirezionale: anche il sistema apre thread di discussione nella stessa GUI (gli escalation packet di Spec §69 diventano thread). Le discussioni sono salvate come episodi e alimentano audit e policy learning.
 → Spec: estendere §21, §69 + collaboration/ in §58; GUI in M25.
 
+**M28 (P1, requisito) — Skills e MCP server importabili.**
+Il sistema deve poter usare capacità importate in forma pacchettizzata, al pari dei runtime agentici moderni (es. Claude Code, Hermes):
+(a) **Skill package** — conoscenza procedurale autocontenuta: manifest (nome, descrizione, trigger di applicabilità, risk class, versione, provenance) + istruzioni + script/risorse opzionali. Le skill importate si registrano nella memoria procedurale/policy con provenance `imported` (distinta dalle skill *apprese* via Skill Acquisition, Spec §72) e vengono caricate on demand (progressive disclosure) per rispettare i budget di contesto (§37).
+(b) **MCP server** (Model Context Protocol) — il tool registry agisce da client MCP: all'import enumera tool e risorse del server, li mappa in nodi del Tool Graph con schemi e stime di costo/latenza/affidabilità, assegna le risk class, esegue i conformance test in sandbox e registra. Un server MCP è un tipo di adapter dietro le porte dei tool (M26).
+Sicurezza (per entrambi): sandbox-first, verifica di provenance, credenziali least-privilege, promozione a risk class ≥ EXTERNAL_COMMUNICATION solo con approvazione umana via Decision Supervisor (M10/M24); descrizioni e output dei tool sono contenuto non fidato (M2 — il *description poisoning* è un attacco noto agli ecosistemi MCP); versioni pinnate, un update ri-innesca la validazione. Gestione dalla GUI di configurazione (M25): import, enable/disable, ispezione, permessi. La tool discovery (Spec §71) include i registry di skill/MCP tra i canali di acquisizione di capacità.
+→ Spec: nuova sezione "Imported Skills and MCP Servers" + §14–15, §58, §60–61; Rationale: sezione interface-first; GUI in M25.
+
 ---
 
 ## 5. Cosa NON propongo di cambiare
@@ -276,3 +288,5 @@ Da verificare puntualmente (ID e venue) in fase di applicazione di M19.
 2. Le voci approvate si applicano ai documenti: i due `.md` con edit diretti; il paper `.docx` con *tracked changes* (revisionabili e accettabili/rifiutabili in Word), rigenerando il mirror `.md` dopo ogni modifica.
 3. Commit incrementali per gruppi di modifiche approvate, sul branch `claude/pgdca-analysis-feedback-ccn86f`.
 4. Verifica finale: validazione del `.docx`, render PDF di controllo, coerenza cross-documento dei termini canonici (M14).
+
+**Stato**: passi 1–2 completati con la v1.0; decisioni registrate il 30/08/2026; v1.1 applicata ai due `.md` (nuove sezioni + numerazione scalata) e al paper `.docx` come tracked changes da accettare/rifiutare in Word.
