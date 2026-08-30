@@ -1,13 +1,13 @@
-"""Skeleton: connect the existing Call Happy Call project as the voice
+"""Skeleton: connect the existing CallAPICall project as the voice
 adapter (local development - the project lives on your machine).
 
 Fill the TODOs, then:
 
     from pgdca.ports.voice import conformance
-    assert conformance(CallHappyCallAdapter()) == []
+    assert conformance(CallAPICallAdapter()) == []
 
     from pgdca.tools.external import register_external_ports
-    register_external_ports(ctrl.registry, voice=CallHappyCallAdapter(),
+    register_external_ports(ctrl.registry, voice=CallAPICallAdapter(),
                             principal="<your name>")
 
 Notes:
@@ -15,17 +15,17 @@ Notes:
   line - the adapter must not strip it;
 - transcripts you return are treated as untrusted data by the
   architecture; recording/consent handling per jurisdiction belongs in
-  the Call Happy Call side or here, before returning results.
+  the CallAPICall side or here, before returning results.
 """
 from __future__ import annotations
 
 from pgdca.ports.voice import CallResult
 
 
-class CallHappyCallAdapter:
+class CallAPICallAdapter:
     def __init__(self):
-        # TODO(local): import the Call Happy Call client/API here.
-        raise NotImplementedError("wire the local Call Happy Call project here")
+        # TODO(local): import the CallAPICall client/API here.
+        raise NotImplementedError("wire the local CallAPICall project here")
 
     def initiate_call(self, number: str, purpose: str) -> str:
         raise NotImplementedError  # TODO(local): CHC initiate_call()

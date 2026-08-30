@@ -1,4 +1,4 @@
-"""Voice call port - the Call Happy Call integration point (spec §20).
+"""Voice call port - the CallAPICall integration point (spec §20).
 
 The cognitive architecture sees only this generic interface; the
 existing local application connects later as an adapter (bridge where

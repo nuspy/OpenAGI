@@ -67,7 +67,7 @@ def register_external_ports(registry: ToolRegistry, *,
                                        "trust": "untrusted"})
 
     registry.register(_spec("voice.call", RiskClass.EXTERNAL_COMMUNICATION,
-                            "place a phone call (Call Happy Call port); "
+                            "place a phone call (CallAPICall port); "
                             "AI disclosure is spoken first",
                             v_real, enable_mocks), voice_call)
 

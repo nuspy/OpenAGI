@@ -4,10 +4,12 @@
 **Project type:** Autonomous cognitive / agentic architecture  
 **Primary implementation target:** Cloud Code  
 **Status:** Architecture and implementation specification  
-**Version:** 1.1  
+**Version:** 1.2  
 **Date:** 2026-08-30
 
 > Revision 1.1 applies the approved modifications recorded in `ANALISI_E_PROPOSTE.md`: goal governance and corrigibility, prompt-injection defense, bounded autonomy budgets, vertical-slice phasing with a Phase 0 minimum viable loop, event sourcing and deterministic replay, calibrated scoring, causal-graph and policy-learning guardrails, cold start, tool-acquisition security, compliance and privacy, two-tier guardrails, decision supervisor, GUI/API layer, ports & adapters, deliberation, imported skills and MCP servers, and the normative canonical schema (Appendix A). Section numbering shifted with the inserted sections.
+
+> Revision 1.2 formalizes the user requirements M29–M33 recorded in `ANALISI_E_PROPOSTE.md` (rev. 4–5), previously specified only by the reference implementation and phase documents: cross-AI review with a per-checkpoint consensus matrix (§93), the grounding check inside the guardrail system (§94), exogenous directives and facts with consensus weaving and re-evaluating CRUD (§95), extended human–AI interaction — change-set resolutions, scenario threads, AI-initiated consultations (§96), and the feature-settings surface (§97). Sections 93–97 are appended; existing numbering is unchanged. §65 gains the event types introduced since 1.1. The voice application's correct name is **CallAPICall** (earlier documents wrote "CallAPICall"; corrected on the owner's instruction — the paper carries the old name until its next tracked-changes revision).
 
 ---
 
@@ -693,7 +695,7 @@ Initial ports:
     llm_provider        (the existing provider library integrates as an adapter)
     browser             (agentic browser implementations)
     vault_payments
-    voice_call          (Call Happy Call integrates later as an adapter; only port + mock initially)
+    voice_call          (CallAPICall integrates later as an adapter; only port + mock initially)
     email
     sms
     identity_2fa
@@ -856,9 +858,9 @@ The controller decides whether the message changes the world state or goal prior
 
 The system must integrate the existing project:
 
-## Call Happy Call
+## CallAPICall
 
-Call Happy Call provides the voice interaction capability.
+CallAPICall provides the voice interaction capability.
 
 Required interface:
 
@@ -879,7 +881,7 @@ Use:
 - call recording metadata where legally/technically appropriate;
 - structured transcript events.
 
-The cognitive architecture should not know implementation details of Call Happy Call. It should see a generic communication tool interface.
+The cognitive architecture should not know implementation details of CallAPICall. It should see a generic communication tool interface.
 
 Initially only the port and a mock implementation are built; the existing application integrates later as an adapter (with a bridge where APIs do not match).
 
@@ -2123,7 +2125,7 @@ Implement as modular services/interfaces:
       sms
       payments
       identity
-      call_happy_call
+      call_api_call
 
     collaboration/
       human_interface
@@ -2280,6 +2282,26 @@ Suggested events:
     MCP_SERVER_DISABLED
     DELIBERATION_OPENED
     DELIBERATION_RESOLVED
+
+Added in revision 1.2 (implemented since 1.1):
+
+    CYCLE_STARTED / CYCLE_COMPLETED / CONTROL_COMMAND / STATE_CHANGED
+    CONFIG_UPDATED
+    LLM_REQUEST / LLM_RESPONSE / LLM_USAGE
+    DECISION_MADE / SENSITIVITY_UNSTABLE
+    STRATEGY_PROPOSED / STRATEGY_SELECTED / STRATEGY_UPDATED / STRATEGY_COMPLETED
+    TARGET_DEFERRED / TARGET_COMPLETED / OPPORTUNITY_DETECTED
+    NODE_ADDED / NODE_UPDATED / NODE_INVALIDATED / EDGE_ADDED / EDGE_UPDATED
+    GOAL_PROPOSED / GOAL_RATIFIED
+    BUDGET_SET / RESOURCE_SPENT / CONTENT_INGESTED
+    VERIFICATION_COMPLETED / POLICY_SHADOW_EVALUATED / CALIBRATION_UPDATED
+    CLAIM_RECORDED / CONTRADICTION_DETECTED / CONTRADICTION_UPDATED
+    COUNTERFACTUAL_ANALYZED / GRAPH_MAINTENANCE / COMPENSATION_EXECUTED
+    DELIBERATION_MESSAGE
+    SKILL_UPDATED / MCP_SERVER_UPDATED / TOOL_UPDATED / CAPABILITY_QUARANTINED
+    REVIEW_COMPLETED / KNOWLEDGE_ADDED
+    DIRECTIVE_ISSUED / FACT_RECORDED
+    INTEGRATION_PROPOSED / INTEGRATION_APPLIED / REEVALUATION_REQUESTED
 
 ---
 
@@ -2857,7 +2879,7 @@ Integrate:
 - identity;
 - payment vault;
 - 2FA;
-- Call Happy Call.
+- CallAPICall.
 
 Goal: environmental autonomy.
 
@@ -3081,7 +3103,7 @@ Cloud Code should implement the project in this order:
 23. Integrate secure vault and payment capability.
 24. Integrate authentication/2FA connectors.
 25. Integrate email and SMS.
-26. Integrate Call Happy Call.
+26. Integrate CallAPICall.
 27. Implement human escalation and AI-to-AI communication.
 28. Implement observability, metrics and replay.
 29. Implement long-running autonomous test scenarios.
@@ -3173,6 +3195,194 @@ The north star: the project approaches completion when a persistent goal can be 
 - continue operating over long time horizons without requiring a new human prompt for every step.
 
 The system should be judged primarily by **long-horizon autonomous goal achievement, adaptability, calibration, learning from experience, and quality of strategic decisions**, not by isolated benchmark performance of the underlying LLM.
+---
+
+# 93. Cross-AI Review (M29)
+
+A second, independent AI reviews the primary's sensitive outputs
+before they are enacted. The reviewer is any adapter behind the LLM
+port (§16, §49) running behind its own gateway instance, so every
+exchange is logged (`LLM_REQUEST/RESPONSE/USAGE`), deterministic in
+replay, and cost-accounted per role. In production the reviewer should
+be a different provider or model family from the primary (mitigating
+the multi-agent confirmation failure mode).
+
+**Review matrix (normative).** Configuration holds one policy per
+checkpoint, runtime-editable by the human only (`CONFIG_UPDATED`):
+
+    review_matrix: {
+      <checkpoint>: { enabled: bool,
+                      max_rounds: int,          # interactions allowed to reach consensus
+                      on_disagreement: "human" | "primary_decides",
+                      min_risk_class?: str }    # decision checkpoint only
+    }
+
+Checkpoints: `decision` (every significant decision at or above
+`min_risk_class`, i.e. the enactment of actions), `strategy` (the
+setting and management of subtargets: strategy branches, §before
+selection guides arbitration), `retrospective` (the regressive
+analyses: audit §29–30 + counterfactual §34), `integration` (exogenous
+weaving proposals, §95).
+
+**Consensus protocol.** Mechanics are deterministic; only the wording
+is generative. Per round: the reviewer's `review` role returns
+objections (an empty set = agreement); the primary's `defend` role
+returns maintained points with evidence — an empty set means the
+primary **concedes** and the subject is **withdrawn** (a conceded
+decision is pruned and never enacted). Outcomes:
+
+- `consensus` — proceed; agreed points accumulate per checkpoint;
+- `withdrawn` — not enacted;
+- rounds exhausted → the matrix override decides:
+  - `"human"`: the final decision is discussed with the human before
+    being enacted — a decision's verdict is forced to HUMAN_REQUIRED
+    with the standing objections as `[review]` reasons (§72); a
+    strategy branch defers, a system deliberation thread opens (§78)
+    and replanning pauses until it is resolved; a contested
+    retrospective opens a thread and its audit must not feed policy
+    learning (§31–32) until then;
+  - `"primary_decides"`: the primary's `decide` role rules, and MUST
+    receive the consensus points already agreed for that checkpoint;
+    the dissent stays on record as a verdict advisory and in the
+    review record.
+
+Every review is one auditable `REVIEW_COMPLETED` event attached to its
+journal record (§27) and rendered in the deliberation surface.
+
+---
+
+# 94. Grounding Check (M30)
+
+An anti-hallucination layer *inside* the guardrail system (§71): a
+guardrail rule kind, optional and carrying the full flexibility matrix
+(hard/soft block, warn, advisory; conditions, exclusions, exceptions;
+Tier 1 or 2):
+
+    { kind: "ground_check", attributes: [..],
+      tolerance: float, require_evidence?: bool }
+
+**Knowledge store.** A deterministic local retrieval store with two
+inflows only: the system's own **observations auto-index** (research
+results — the world is the best ground truth), and the human adds
+curated documents (`KNOWLEDGE_ADDED`, human-only — the system must not
+launder self-asserted facts into its own ground truth). The reference
+retrieval is lexical and dependency-free; an embedding retriever may
+replace it behind the same interface without touching callers.
+
+**The check runs with no LLM in the loop.** A decision whose claimed
+value for a listed attribute contradicts the grounded value beyond
+`tolerance` triggers the guardrail deterministically;
+`require_evidence` additionally flags confident claims with no
+grounding at all. This is defense in depth with the prompt-injection
+taint (§73): the adversarial advert's fake price is caught by
+contradiction even where the taint window has been ablated.
+
+---
+
+# 95. Exogenous Inputs: Directives and Facts (M31)
+
+Human decisions and world changes enter the *running* loop as
+first-class weighted graph nodes.
+
+**Node kinds (normative).**
+
+- `DIRECTIVE` — a normative human decision issued mid-flight: a new
+  short/long-horizon target, an imposed limit or thing to avoid, a
+  context change. Weight = `priority`; props `horizon`
+  (short|long), `directive_type` (target|constraint|context),
+  `description`. **DIRECTIVE is a member of GOAL_KINDS**: an ACTIVE
+  directive is a propagation anchor, weighed automatically by causal
+  propagation (§10), arbitration U(a) (§5, A.3), antagonism analysis
+  (§11) and critique among all existing decision points.
+- `FACT` — a descriptive scenario change: `imposed` (true on arrival —
+  a law, an inheritance) or an `opportunity` the human accepts or
+  declines. Weight = `importance`. Facts are not anchors; they act
+  through their typed edges and the blocking rule below.
+
+**Origin envelope (normative, federation-ready).** Every exogenous
+node carries `origin: {source, authority, instance}`. Only
+`authority: "owner"` (the local human) is trusted. Any other authority
+is external content: `CONTENT_INGESTED` + taint (§73), ground-check
+applicable (§94), consensus always required, never auto-active, never
+Tier 1. Future superior/peer AI instances (see
+`docs/future_features.md`) enter through this same channel with a
+different envelope — the network is not a new trust boundary.
+
+**Integration = consensus before weaving.** On creation
+(`DIRECTIVE_ISSUED` / `FACT_RECORDED`), the gateway role `integrate`
+proposes: typed weighted edges against the existing graph ("avoid X" →
+BLOCK), new plan subtargets, deferrals, budget impacts, detected
+conflicts, open questions (`INTEGRATION_PROPOSED`). The proposal —
+optionally after cross-AI review (§93, checkpoint `integration`) —
+opens a system deliberation thread (§78). Resolving it
+confirmed/modified applies it (`INTEGRATION_APPLIED`) with human
+provenance: edges VALIDATED (`integration_agreed:<id>`), spawned
+targets created and ratified by that explicit human confirmation (goal
+governance §69 intact), deferrals applied, the node ACTIVE. Budget
+impacts are NEVER applied automatically (the autonomy ratchet):
+they are listed for the human as change-set operations (§96). Below a
+configurable weight threshold, edges may self-apply as HYPOTHESIZED
+under the causal-graph guardrails (§10); opportunities and non-owner
+inputs never auto-weave.
+
+**Deterministic reversible blocking.** A TARGET/SUB_TARGET with an
+active BLOCK/INHIBIT edge from an ACTIVE directive/fact is deferred by
+the reconciler (with a `deferred_by` marker) and MUST reactivate when
+the blocker ceases to be active — imposed limits dissolve when
+retired.
+
+**CRUD with re-evaluation (normative).** Updates emit `HUMAN_EDIT` +
+`REEVALUATION_REQUESTED` and dirty the subgraph for the event-driven
+reconciler; a re-integrate command re-runs the weaving analysis in a
+fresh thread. Deletion is event-sourced retirement: the node and every
+touching edge are invalidated, integration-spawned nodes are listed in
+an orphan-review thread for the human, and blocked targets reactivate.
+
+---
+
+# 96. Extended Human–AI Interaction (M32)
+
+Extends deliberation (§78) in both directions.
+
+**Change-set resolutions.** A thread resolution of outcome `modified`
+may carry a typed operation list, each op routed through its existing
+human-identity channel — no new authority is created:
+
+    { op: "node_props" | "new_directive" | "new_fact"
+        | "propose_goal" (+ ratify) | "defer_target"
+        | "set_budget" | "create_guardrail", ... }
+
+Any conversation can therefore, on the human's request, modify the
+overall scenario and targets, transactionally recorded in the
+resolution's effects.
+
+**Scenario threads.** Subject kind `scenario`: the evidence packet is
+the whole picture (active goals, open/deferred targets, budget, active
+directives and facts), so the human can discuss the overall course and
+close with a change-set.
+
+**AI-initiated consultations.** Beyond escalations (§77), review
+disagreements (§93) and integrations (§95), the system opens a
+consultation thread when a detected conflict (§11) touches a human
+DIRECTIVE — the trade-off is the human's to weigh — and, config-gated
+(`consultation_interval_cycles`, default off), a periodic sync thread
+summarizing state and open questions.
+
+---
+
+# 97. Feature Settings Surface (M33)
+
+Every optional mechanism above is operable without editing raw
+configuration: the GUI (§62) exposes structured panels — the cross-AI
+review matrix per checkpoint (enable, max rounds, disagreement
+override, minimum risk class), grounding (list/toggle/create
+ground-check guardrails, knowledge-store size), and the exogenous /
+consultation knobs (consensus requirement, auto-weave threshold,
+consultation cadence). All writes go through the existing human-only
+configuration and guardrail APIs and are auditable `CONFIG_UPDATED` /
+guardrail events; the raw configuration table remains as the power
+fallback.
+
 ---
 
 # Appendix A. Canonical Schema (Normative)

@@ -12,7 +12,7 @@ reale si scrive localmente e si collega senza toccare il core
 | Integrazione | Perché locale | Porta (qui) | Skeleton adapter | Tool esposti (risk class) |
 |---|---|---|---|---|
 | **Libreria provider LLM** (tua, esistente) | la libreria è sul tuo PC | `pgdca/cognition/gateway.py` → `LlmPort` | `examples/adapters/local_llm_provider_adapter.py` | è il gateway stesso |
-| **Call Happy Call** (voce/telefono) | progetto esistente sul tuo PC | `pgdca/ports/voice.py` → `VoiceCallPort` | `examples/adapters/call_happy_call_adapter.py` | `voice.call` (EXTERNAL_COMMUNICATION) |
+| **CallAPICall** (voce/telefono) | progetto esistente sul tuo PC | `pgdca/ports/voice.py` → `VoiceCallPort` | `examples/adapters/call_api_call_adapter.py` | `voice.call` (EXTERNAL_COMMUNICATION) |
 | **Email** | credenziali/caselle locali | `pgdca/ports/messaging.py` → `EmailPort` | da scrivere sul modello degli altri | `email.send` (EXTERNAL_COMMUNICATION), `email.fetch` (READ_ONLY, output untrusted) |
 | **SMS** | credenziali locali | `pgdca/ports/messaging.py` → `SmsPort` | idem | `sms.send`, `sms.fetch` |
 | **Browser agentico** | browser/profili locali | `pgdca/ports/browser.py` → `BrowserPort` | idem (Playwright/CDP a scelta) | `browser.navigate/click/type/extract` (EXTERNAL_COMMUNICATION) |

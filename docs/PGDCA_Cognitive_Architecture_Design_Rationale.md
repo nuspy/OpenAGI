@@ -1418,9 +1418,9 @@ The model should not possess unrestricted authentication authority.
 
 ---
 
-# 41. Call Happy Call
+# 41. CallAPICall
 
-PGDCA should integrate the existing **Call Happy Call** project as the voice communication subsystem.
+PGDCA should integrate the existing **CallAPICall** project as the voice communication subsystem.
 
 It provides the bridge between:
 
@@ -1446,7 +1446,7 @@ Goal
  ↓
 Need human interaction
  ↓
-Call Happy Call
+CallAPICall
  ↓
 Conversation
  ↓
@@ -2589,7 +2589,7 @@ Phases are vertical slices: each phase must end with the complete loop running o
 27. SMS
 28. Authentication
 29. Payment Vault
-30. Call Happy Call
+30. CallAPICall
 
 ## Phase 7 — Distributed Cognition
 

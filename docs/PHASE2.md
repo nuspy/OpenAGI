@@ -3,12 +3,12 @@
 ## 1. Local-integration connection points (interface-first)
 
 Everything that must be integrated on the owner's machine (the provider
-library, Call Happy Call, credentials-bound connectors) is deferred to
+library, CallAPICall, credentials-bound connectors) is deferred to
 local development — **here only the ports exist**: typed Protocols,
 mock adapters, conformance suites, and registry wiring. See
 `docs/LOCAL_INTEGRATIONS.md` (operational guide, in Italian).
 
-- `pgdca/ports/voice.py` — `VoiceCallPort` (Call Happy Call point;
+- `pgdca/ports/voice.py` — `VoiceCallPort` (CallAPICall point;
   spec §20 surface: initiate/answer/speak/listen/transcribe/
   detect_speaker_state/terminate).
 - `pgdca/ports/messaging.py` — `EmailPort`, `SmsPort` with structured
@@ -31,7 +31,7 @@ mock adapters, conformance suites, and registry wiring. See
   instructs.
 - Skeletons to fill on the local machine:
   `examples/adapters/local_llm_provider_adapter.py`,
-  `examples/adapters/call_happy_call_adapter.py`.
+  `examples/adapters/call_api_call_adapter.py`.
 
 ## 2. Strategy branching (spec: Hypothesis Engine / Strategy Branching)
 
