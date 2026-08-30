@@ -49,6 +49,8 @@
   .pill.DENIED,.pill.INVALIDATED{background:#fef2f2;color:var(--bad)}
   .pill.HUMAN_REQUIRED,.pill.PENDING_HUMAN,.pill.SHADOW,.pill.SUPERSEDED{background:#fffbeb;color:var(--warn)}
   .pill.DEFERRED,.pill.DISABLED{background:#eff6ff;color:#2563eb}
+  .pill.SUCCESSFUL{background:#ecfdf5;color:var(--ok)} .pill.PRUNED,.pill.FAILED{background:#fef2f2;color:var(--bad)}
+  .pill.PROPOSED{background:#f1f5f9;color:var(--muted)}
   .pill.t1{background:#eef2ff;color:var(--accent)} .pill.t2{background:#f1f5f9;color:var(--muted)}
   dialog{border:1px solid var(--line);border-radius:12px;max-width:720px;width:90%;max-height:80vh;overflow:auto}
   dialog::backdrop{background:rgba(15,23,42,.35)}
@@ -136,7 +138,10 @@
 </main>
 
 <main id="tab-journal"><div class="panel"><table id="journal"></table></div></main>
-<main id="tab-policies"><div class="panel"><table id="policies"></table></div></main>
+<main id="tab-policies">
+  <div class="panel"><h3>Strategy branches</h3><table id="strategies"></table></div>
+  <div class="panel" style="margin-top:12px"><h3>Policies</h3><table id="policies"></table></div>
+</main>
 <main id="tab-events"><div class="panel" id="events"></div></main>
 
 <dialog id="dlg"><div id="dlgbody"></div><p style="text-align:right"><button onclick="dlg.close()">Close</button></p></dialog>
@@ -365,6 +370,14 @@ async function refresh(){
       caps.tools.map(t=>`<tr><td class="mono">${t.name}</td><td>${t.risk_class}</td><td class="muted">${t.provenance}</td>
         <td class="muted">${t.description}${t.description_trust==='untrusted'?' <span class="pill DENIED">untrusted text</span>':''}</td>
         <td><span class="pill ${t.enabled?'ACTIVE':'DISABLED'}">${t.enabled?'ACTIVE':'DISABLED'}</span></td></tr>`).join('');
+
+    const strats=await api('/strategies');
+    $('#strategies').innerHTML='<tr><th>id</th><th>label</th><th>status</th><th>step</th><th>score</th></tr>'+
+      (strats.map(b=>`<tr><td class="mono">${b.id}</td><td>${b.label}</td>
+        <td><span class="pill ${b.status}">${b.status}</span></td>
+        <td>${Math.min(b.step_index,b.steps.length)}/${b.steps.length}
+            <span class="muted">${b.steps.map(s=>(s.action_name==='research_price'?'r:':'b:')+s.factor_id).join(' → ')}</span></td>
+        <td>${b.score}</td></tr>`).join('')||'<tr><td class="muted" colspan="5">no strategies yet</td></tr>');
 
     const pols=await api('/policies');
     $('#policies').innerHTML='<tr><th>id</th><th>description</th><th>status</th><th>evidence</th><th>agreements</th><th>origin</th></tr>'+

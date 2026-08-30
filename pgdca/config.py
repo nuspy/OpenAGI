@@ -37,6 +37,12 @@ class Config:
     max_propagation_depth: int = 2
     hypothesized_edge_penalty: float = 0.6  # confidence multiplier for HYPOTHESIZED edges
 
+    # --- strategy branching ---
+    strategy_adherence_bonus: float = 0.05   # small: real re-arbitration must still win
+    strategy_prune_ratio: float = 0.5        # branches below best*ratio are pruned
+    strategy_step_discount: float = 0.85     # front-loaded value in branch scoring
+    strategy_max_step_failures: int = 2      # step failures before a branch FAILS
+
     # --- loop limits (bounded autonomy: hard ceilings, human-expandable only) ---
     max_cycles_per_run: int = 50
 

@@ -15,7 +15,7 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-**Phase 1 implemented and green** (51 tests): persistent operation with recovery, imported skills and MCP servers under security gates (M28), Anthropic reference adapter behind the LLM port, dynamic reprioritization with target deferral — see [`docs/PHASE1.md`](docs/PHASE1.md). Phase 0 (Minimum Viable Loop) documented in [`docs/PHASE0.md`](docs/PHASE0.md) with the spec-traceability matrix. Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
+**Phase 2 implemented and green** (63 tests): external-world connection points behind typed ports (voice/Call Happy Call, email, SMS, browser, vault, identity — mocks + conformance here, real adapters in local development per [`docs/LOCAL_INTEGRATIONS.md`](docs/LOCAL_INTEGRATIONS.md)) and strategy branching with the full PROPOSED→ACTIVE→DEFERRED/FAILED→SUCCESSFUL lifecycle — see [`docs/PHASE2.md`](docs/PHASE2.md). Earlier slices: [`docs/PHASE1.md`](docs/PHASE1.md) (recovery, skills/MCP import M28, reference adapter, dynamic reprioritization), [`docs/PHASE0.md`](docs/PHASE0.md) (Minimum Viable Loop + spec-traceability matrix). Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
 
 ## Phase 0 quickstart
 
@@ -37,9 +37,11 @@ pgdca/
   security/                     two-tier guardrails, decision supervisor, budgets, taint
   cognition/                    LLM gateway port + mock/replay/anthropic adapters
   memory/                       journal, audit (dq≠oq), policies (SHADOW), calibration
+  planning.py                   strategy branching with lifecycle + adherence bonus
   controller.py                 deterministic controller + cognitive cycle + recovery
-  tools/                        registry, skill packages, MCP client, capability store
+  ports/                        voice, email/SMS, browser, vault/identity (Protocol+mock+conformance)
+  tools/                        registry, skill packages, MCP client, capability store, port wiring
   scenario/                     toy acceptance scenario + opportunity reprioritization
   api/ ui/                      FastAPI backend + single-file web GUI
-examples/                       sample skill package + sample MCP server
+examples/                       sample skill package, sample MCP server, local adapter skeletons
 ```

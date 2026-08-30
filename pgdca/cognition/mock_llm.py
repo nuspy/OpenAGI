@@ -26,6 +26,8 @@ class MockLlmAdapter:
             return self._critique(ctx)
         if role == "abstraction":
             return self._abstraction(ctx)
+        if role == "strategies":
+            return self._strategies(ctx)
         return {"schema": SCHEMA_VERSION, "role": role or "unknown",
                 "summary": "no-op", "hypotheses": []}
 
@@ -94,6 +96,53 @@ class MockLlmAdapter:
                 "missing_information": [f["id"] for f in factors
                                         if f.get("unit_cost") is None],
                 "confidence": 0.8}
+
+    def _strategies(self, ctx: dict) -> dict:
+        """Two competing multi-step branches over the graph-derived context
+        (external content never enters strategy formation)."""
+        remaining = ctx.get("budget", {}).get("money", {}).get("remaining", 0.0)
+        candidates = []
+        for f in ctx.get("factors", []):
+            needed = int(f.get("quantity_needed", 1)) - int(f.get("acquired_qty", 0))
+            if needed <= 0:
+                continue
+            cost = f.get("unit_cost")
+            if cost is not None and float(cost) * needed > remaining:
+                continue  # known-unaffordable: plan around it
+            candidates.append(f)
+
+        def steps_for(ordering):
+            steps = []
+            for f in ordering:
+                if f.get("unit_cost") is None or float(f.get("cost_confidence", 0.3)) < 0.6:
+                    steps.append({"action_name": "research_price",
+                                  "factor_id": f["id"]})
+                steps.append({"action_name": "purchase", "factor_id": f["id"]})
+            return steps
+
+        by_importance = sorted(candidates,
+                               key=lambda f: (-float(f.get("importance", 0.5)),
+                                              f["id"]))
+        hyps = []
+        if by_importance:
+            hyps.append({"action_name": "strategy",
+                         "params": {"label": "critical-enablers-first",
+                                    "steps": steps_for(by_importance)},
+                         "rationale": "secure high-impact, low-substitutability "
+                                      "factors before support items",
+                         "expected": {}, "success_prob": 0.9,
+                         "confidence": 0.8, "risk_class": "READ_ONLY"})
+        if len(by_importance) > 1:
+            hyps.append({"action_name": "strategy",
+                         "params": {"label": "support-items-first",
+                                    "steps": steps_for(list(reversed(by_importance)))},
+                         "rationale": "cheap support items first",
+                         "expected": {}, "success_prob": 0.85,
+                         "confidence": 0.7, "risk_class": "READ_ONLY"})
+        return {"schema": SCHEMA_VERSION, "role": "strategies",
+                "summary": f"{len(hyps)} strategy branches",
+                "hypotheses": hyps, "assumptions": [], "risks": [],
+                "missing_information": [], "confidence": 0.8}
 
     def _critique(self, ctx: dict) -> dict:
         risks = []

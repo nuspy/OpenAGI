@@ -69,6 +69,10 @@ def create_app(ctrl: Controller) -> FastAPI:
     def policies():
         return ctrl.policies.snapshot()
 
+    @app.get("/api/strategies")
+    def strategies():
+        return ctrl.strategies.snapshot()
+
     @app.get("/api/capabilities")
     def capabilities():
         snap = ctrl.capability_store.snapshot()
@@ -297,6 +301,10 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
         from ..cognition.anthropic_adapter import AnthropicLlmAdapter
         adapter = AnthropicLlmAdapter()
     ctrl, _env = create(db_path=args.db, adapter=adapter)
+    # expose the local-integration connection points (disabled until real
+    # adapters are wired in local development - docs/LOCAL_INTEGRATIONS.md)
+    from ..tools.external import register_external_ports
+    register_external_ports(ctrl.registry)
     app = create_app(ctrl)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 

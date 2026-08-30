@@ -22,6 +22,7 @@ from .memory.audit import AuditEngine
 from .memory.calibration import CalibrationProjection
 from .memory.journal import JournalProjection
 from .memory.policies import PolicyEngine, PolicyProjection
+from .planning import StrategyEngine, StrategyProjection
 from .runtime import Runtime
 from .security.budgets import BudgetProjection, set_budget
 from .security.guardrails import Flexibility, GuardrailStore, guardrail
@@ -78,6 +79,11 @@ class Controller:
         self.capability_store = runtime.register(CapabilityStore())
         self.capabilities = CapabilityManager(runtime, self.capability_store,
                                               registry)
+        self.strategies = runtime.register(StrategyProjection())
+        self.strategy_engine = StrategyEngine(runtime, self.strategies,
+                                              self.gateway, self.graph,
+                                              self.budgets, self.config)
+        self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
         self.cycle = 0
@@ -129,7 +135,7 @@ class Controller:
         import json as _json
         import re as _re
         counters: dict[str, int] = {}
-        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal)_)(\d+)"')
+        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal|str)_)(\d+)"')
         last_cycle = 0
         last_control: str | None = None
         for ev in events:
@@ -325,6 +331,12 @@ class Controller:
             self._set_state(SysState.IDLE)
             return CycleResult(self.cycle, "idle")
 
+        # strategy branching: plan when nothing is active, then resolve the
+        # branch's next actionable step for this cycle
+        self.strategy_engine.ensure(context)
+        allowed = {f["id"] for f in context["factors"]}
+        self._cycle_step_ref = self.strategy_engine.current_step_ref(allowed)
+
         # generative cognition: hypotheses, then independent critique
         response = self.gateway.ask("hypotheses", context)
         hyps = [h for h in response.hypotheses
@@ -359,6 +371,17 @@ class Controller:
         # arbitration with the sensitivity gate
         ranked, unstable = score_candidates(self.graph, self.budgets, hyps,
                                             self.config)
+        # adherence bonus: the active strategy's next step gets a small edge,
+        # deliberately too small to overrule a genuinely better alternative
+        if self._cycle_step_ref is not None:
+            _, step = self._cycle_step_ref
+            for s in ranked:
+                if (s.hyp.action_name == step.get("action_name")
+                        and s.hyp.params.get("factor_id") == step.get("factor_id")):
+                    s.utility += self.config.strategy_adherence_bonus
+                    s.parts["strategy_bonus"] = self.config.strategy_adherence_bonus
+            ranked = sorted(ranked, key=lambda s: (-s.utility, s.hyp.action_name,
+                                                   str(sorted(s.hyp.params.items()))))
         selected = ranked[0]
         if unstable:
             research = next((s for s in ranked
@@ -386,9 +409,16 @@ class Controller:
             p = self.graph.node(fid)["props"]
             fsnap = {"importance": p.get("importance"),
                      "substitutability": p.get("substitutability")}
+        strategy_info = None
+        if self._cycle_step_ref is not None:
+            bid, step = self._cycle_step_ref
+            if (decision.action_name == step.get("action_name")
+                    and decision.params.get("factor_id") == step.get("factor_id")):
+                strategy_info = {"branch_id": bid, "step": step}
         dec_context = {"budget_limit": self.budgets.limit("money"),
                        "budget_remaining": self.budgets.remaining("money"),
-                       "factor_snapshot": fsnap, "unstable": unstable}
+                       "factor_snapshot": fsnap, "unstable": unstable,
+                       "strategy": strategy_info}
         self.runtime.emit(Ev.DECISION_MADE, {
             "decision": decision.to_dict(),
             "alternatives": [{"action_name": s.hyp.action_name,
@@ -632,6 +662,8 @@ class Controller:
                                "error": result.error}, Actor.SYSTEM)
             status = "failed"
 
+        self.strategy_engine.note_execution(self._cycle_step_ref, decision,
+                                            status == "executed")
         audit_payload = self.audit_engine.run(self.journal.records[did])
         self.policy_engine.learn(audit_payload)
         self._apprentice_check(audit_payload["features"].get("domain", "general"))
