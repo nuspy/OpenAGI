@@ -78,6 +78,19 @@ def test_mock_adapter_conformance():
 
 
 # ----------------------------------------------------------- arbitration
+def test_purchase_without_factor_id_scores_instead_of_crashing(ctrl_env):
+    """Observed live: a real model proposed a purchase with no factor_id;
+    arbitration must rank it (contribution 0), not KeyError the cycle."""
+    ctrl, _ = ctrl_env
+    hyp = Hypothesis(action_name="purchase", params={"total_cost": 10.0},
+                     success_prob=0.5, confidence=0.5,
+                     risk_class=RiskClass.FINANCIAL.value)
+    ranked, _unstable = score_candidates(ctrl.graph, ctrl.budgets, [hyp],
+                                         Config())
+    assert len(ranked) == 1
+    assert ranked[0].parts["contribution"] == 0.0
+
+
 def _purchase(factor_id, total_cost, conf=0.95, p=0.9):
     return Hypothesis(action_name="purchase",
                       params={"factor_id": factor_id, "quantity": 1,

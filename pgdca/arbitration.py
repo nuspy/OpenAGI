@@ -53,7 +53,9 @@ def score_candidates(graph: GraphProjection, budgets: BudgetProjection,
     gross: dict[int, float] = {}
     for i, h in enumerate(hyps):
         if h.action_name == "purchase":
-            c, _, _ = _goal_contribution(graph, h.params["factor_id"], h.success_prob)
+            # real models sometimes omit factor_id: contribution 0, not a crash
+            c, _, _ = _goal_contribution(graph, h.params.get("factor_id", ""),
+                                         h.success_prob)
             gross[i] = c
         else:
             gross[i] = 0.0
@@ -64,7 +66,7 @@ def score_candidates(graph: GraphProjection, budgets: BudgetProjection,
         cost_conf = float(h.params.get("cost_confidence", h.confidence))
         if h.action_name == "purchase":
             contribution, path_conf, detail = _goal_contribution(
-                graph, h.params["factor_id"], h.success_prob)
+                graph, h.params.get("factor_id", ""), h.success_prob)
             parts["goal_contributions"] = detail
             ig = 0.0
         else:  # information-gathering actions

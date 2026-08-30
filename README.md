@@ -21,7 +21,7 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ```bash
 pip install -e ".[api,dev]"            # + ".[anthropic]" for the reference adapter
-pytest                                 # 150 tests incl. acceptance scenarios + deterministic replay
+pytest                                 # 151 tests incl. acceptance scenarios + deterministic replay
 python -m pgdca.bench --seeds 5 --days 6   # PGDCA-Bench: seeded metrics + ablations (M20)
 python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
 python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
