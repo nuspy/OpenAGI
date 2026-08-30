@@ -93,6 +93,7 @@
   <button data-tab="deliberation">Deliberation <span id="dcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails">Guardrails</button>
   <button data-tab="capabilities">Capabilities</button>
+  <button data-tab="llm">LLM</button>
   <button data-tab="journal">Journal</button>
   <button data-tab="policies">Learning</button>
   <button data-tab="config">Config</button>
@@ -213,6 +214,35 @@
     <table id="tooltable"></table></div>
 </main>
 
+<main id="tab-llm">
+  <div class="panel"><h3>Adapter in use <span class="muted">(who does the generative thinking — human-only choice)</span></h3>
+    <p>Current: <b id="llmadapter">…</b></p>
+    <p>
+      <button onclick="switchAdapter('mock')">Mock (deterministic)</button>
+      <button onclick="switchAdapter('llmswitch')" class="primary">llmswitch (local registry)</button>
+      <button onclick="switchAdapter('anthropic')">Anthropic</button>
+    </p>
+    <p class="muted" style="font-size:12px">Switching applies immediately to the next cognitive call and is logged as a CONFIG_UPDATED event.</p>
+  </div>
+  <div class="panel" style="margin-top:12px"><h3>llmswitch providers <span class="muted" id="llmregpath"></span></h3>
+    <table id="llmproviders"></table>
+    <p class="muted" style="font-size:12px">API keys live only in the llmswitch registry file, outside the repo; this page never sees them.</p>
+  </div>
+  <div class="grid2" style="margin-top:12px">
+    <div class="panel"><h3>Assignments <span class="muted">(consumer → provider)</span></h3>
+      <table id="llmassign"></table>
+      <p class="muted" style="font-size:12px">The adapter resolves <i>chat</i> by default; role-specific consumers via PGDCA_LLMSWITCH_CONSUMER_BY_ROLE (M13).</p>
+    </div>
+    <div class="panel"><h3>Add provider</h3>
+      <p><select id="llmnewtype"></select></p>
+      <p><input id="llmnewname" placeholder="name (optional)" style="width:100%"></p>
+      <p><input id="llmnewbase" placeholder="base_url (optional, per i locali/custom)" style="width:100%"></p>
+      <p><input id="llmnewmodel" placeholder="model (optional)" style="width:100%"></p>
+      <p><input id="llmnewkey" placeholder="api_key (se richiesta)" type="password" style="width:100%"></p>
+      <p><button class="primary" onclick="addLlmProvider()">Add</button></p>
+    </div>
+  </div>
+</main>
 <main id="tab-journal"><div class="panel"><table id="journal"></table></div></main>
 <main id="tab-policies">
   <div class="panel"><h3>Strategy branches</h3><table id="strategies"></table></div>
@@ -265,6 +295,71 @@ function showTab(name){
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('main').forEach(m=>m.classList.toggle('active',m.id==='tab-'+name));
   if(name==='config'){api('/config').then(renderConfig).catch(()=>{});renderFeatureSettings().catch(()=>{});}
+  if(name==='llm'){loadLlm().catch(()=>{});}
+}
+
+/* ---------------- LLM provider selection (llmswitch) ---------------- */
+async function loadLlm(){
+  const d=await api('/llm');
+  $('#llmadapter').textContent=d.adapter;
+  const sw=d.llmswitch||{};
+  $('#llmregpath').textContent=sw.available?('('+(sw.registry_path||'')+')'):'(llmswitch non installato)';
+  const assigned={};                       // provider id -> [consumer,...]
+  Object.entries(sw.assignments||{}).forEach(([c,p])=>{(assigned[p]=assigned[p]||[]).push(c)});
+  const rows=(sw.providers||[]).map(p=>`<tr>
+    <td><b>${esc(p.name||p.label)}</b><div class="muted" style="font-size:11px">${esc(p.type)}${p.local?' · locale':''}${p.realtime?'':' · CLI (lento)'}</div></td>
+    <td id="llmmodel-${esc(p.id)}">${esc(p.model||'(auto)')}</td>
+    <td>${p.has_key?'🔑':(p.auth==='none'||p.local?'—':'⚠️ no key')}</td>
+    <td class="muted" style="font-size:11px">${esc((assigned[p.id]||[]).join(', '))}</td>
+    <td style="white-space:nowrap">
+      <button onclick="testLlmProvider('${esc(p.id)}')">Test</button>
+      <button onclick="pickLlmModel('${esc(p.id)}')">Modello…</button>
+      <button onclick="removeLlmProvider('${esc(p.id)}')">✕</button>
+    </td></tr>`).join('');
+  $('#llmproviders').innerHTML='<tr><th>Provider</th><th>Modello</th><th>Auth</th><th>Usato da</th><th></th></tr>'+
+    (rows||'<tr><td class="muted" colspan="5">nessun provider configurato</td></tr>');
+  const provs=sw.providers||[];
+  $('#llmassign').innerHTML='<tr><th>Consumer</th><th>Provider</th></tr>'+(sw.consumers||[]).map(c=>{
+    const cur=(sw.assignments||{})[c]||'';
+    const opts=['<option value="">(nessuno)</option>'].concat(provs.map(p=>
+      `<option value="${esc(p.id)}" ${p.id===cur?'selected':''}>${esc(p.name||p.label)}</option>`)).join('');
+    return `<tr><td>${esc(c)}</td><td><select onchange="assignLlm('${esc(c)}',this.value)">${opts}</select></td></tr>`;
+  }).join('');
+  const sel=$('#llmnewtype');
+  if(sel && !sel.options.length)
+    sel.innerHTML=(sw.types||[]).map(t=>`<option value="${esc(t.type)}">${esc(t.label||t.type)}</option>`).join('');
+}
+async function switchAdapter(type){
+  if(!confirm('Cambiare adapter LLM in "'+type+'"? Vale dal prossimo ciclo.'))return;
+  await post('/llm/adapter',{type}).catch(alert); loadLlm();
+}
+async function addLlmProvider(){
+  const body={type:$('#llmnewtype').value,name:$('#llmnewname').value,
+              base_url:$('#llmnewbase').value,model:$('#llmnewmodel').value,
+              api_key:$('#llmnewkey').value};
+  await post('/llm/providers',body).catch(alert);
+  $('#llmnewkey').value='';$('#llmnewname').value='';$('#llmnewbase').value='';$('#llmnewmodel').value='';
+  loadLlm();
+}
+async function removeLlmProvider(pid){
+  if(!confirm('Rimuovere il provider "'+pid+'"?'))return;
+  await post('/llm/providers/'+pid+'/remove').catch(alert); loadLlm();
+}
+async function testLlmProvider(pid){
+  const cell=$('#llmmodel-'+CSS.escape(pid)); const old=cell.textContent; cell.textContent='test…';
+  const r=await post('/llm/providers/'+pid+'/test').catch(e=>({ok:false,error:e}));
+  cell.textContent=old;
+  alert(r.ok?('OK — '+r.models+' modelli ('+(r.sample||[]).join(', ')+')'):('Errore: '+r.error));
+}
+async function pickLlmModel(pid){
+  let models=[];
+  try{models=(await api('/llm/providers/'+pid+'/models')).models||[]}catch(e){alert('Modelli non leggibili: '+e);return}
+  const items=models.map(m=>`<p><button style="width:100%;text-align:left" onclick="setLlmModel('${esc(pid)}','${esc(m.id)}')">${esc(m.label||m.id)}${m.loaded?' <b class="muted">← in memoria</b>':''}</button></p>`).join('');
+  $('#dlgbody').innerHTML='<h3>Modello per '+esc(pid)+'</h3>'+(items||'<p class="muted">nessun modello visibile</p>');
+  dlg.showModal();
+}
+async function setLlmModel(pid,model){
+  dlg.close(); await post('/llm/providers/'+pid,{model}).catch(alert); loadLlm();
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 

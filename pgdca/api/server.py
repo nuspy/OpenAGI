@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..controller import Controller
 from ..domain import NodeKind
-from ..events import Actor
+from ..events import Actor, Ev
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 
@@ -278,6 +278,129 @@ def create_app(ctrl: Controller) -> FastAPI:
     @app.get("/api/llmusage")
     def llm_usage():
         return ctrl.llm_usage.snapshot()
+
+    # ------------------------------- LLM provider selection (llmswitch)
+    def _llmswitch_registry():
+        """The local llmswitch registry, or None when the library is not
+        installed. Secrets stay in its file outside the repo; only
+        `public()` (keys reduced to a boolean) ever crosses this API."""
+        try:
+            from llmswitch import Registry
+        except ImportError:
+            return None
+        import os
+        return Registry(app_name=os.environ.get("PGDCA_LLMSWITCH_APP",
+                                                "pgdca"))
+
+    def _require_human(x_actor: str | None) -> None:
+        # picking who does the thinking is a human decision, like enabling
+        # a risky tool (promotion is never system-initiated)
+        if _actor(x_actor) != Actor.HUMAN:
+            raise HTTPException(403, "LLM provider changes are human-only")
+
+    def _registry_or_409():
+        reg = _llmswitch_registry()
+        if reg is None:
+            raise HTTPException(409, "llmswitch is not installed in this "
+                                     "environment (pip install -e "
+                                     "C:/Projects/llmswitch)")
+        return reg
+
+    @app.get("/api/llm")
+    def llm_info():
+        adapter = ctrl.gateway.adapter
+        out = {"adapter": type(adapter).__name__,
+               "model_by_role": dict(getattr(adapter, "model_by_role",
+                                             None) or {}),
+               "consumer_by_role": dict(getattr(adapter, "consumer_by_role",
+                                                None) or {})}
+        reg = _llmswitch_registry()
+        if reg is None:
+            out["llmswitch"] = {"available": False}
+        else:
+            out["llmswitch"] = {"available": True,
+                                "registry_path": str(reg.path),
+                                **reg.public()}
+        return out
+
+    @app.post("/api/llm/adapter")
+    def llm_switch_adapter(body: dict = Body(...),
+                           x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        kind = str(body.get("type", "")).strip()
+        if kind == "mock":
+            from ..cognition.mock_llm import MockLlmAdapter
+            adapter = MockLlmAdapter()
+        elif kind == "anthropic":
+            try:
+                from ..cognition.anthropic_adapter import AnthropicLlmAdapter
+                adapter = AnthropicLlmAdapter()
+            except Exception as exc:  # noqa: BLE001 - SDK/credentials missing
+                raise HTTPException(409, f"anthropic adapter unavailable: {exc}")
+        elif kind == "llmswitch":
+            _registry_or_409()
+            try:
+                from examples.adapters.local_llm_provider_adapter import (
+                    LocalProviderAdapter,
+                )
+                adapter = LocalProviderAdapter()
+            except Exception as exc:  # noqa: BLE001 - run from the repo root
+                raise HTTPException(409, f"llmswitch adapter unavailable: {exc}")
+        else:
+            raise HTTPException(400, f"unknown adapter type '{kind}'")
+        ctrl.gateway.adapter = adapter
+        # auditable, and reapplied as a no-op on recovery (unknown config key)
+        ctrl.runtime.emit(Ev.CONFIG_UPDATED,
+                          {"changes": {"llm_adapter": kind}}, Actor.HUMAN)
+        return {"adapter": type(adapter).__name__}
+
+    @app.post("/api/llm/providers")
+    def llm_add_provider(body: dict = Body(...),
+                         x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        reg = _registry_or_409()
+        voce = guard(lambda: reg.add(body))
+        return {"id": voce["id"], "type": voce["type"]}
+
+    @app.post("/api/llm/providers/{pid}")
+    def llm_update_provider(pid: str, body: dict = Body(...),
+                            x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        reg = _registry_or_409()
+        guard(lambda: reg.update(pid, body))
+        return {"id": pid}
+
+    @app.post("/api/llm/providers/{pid}/remove")
+    def llm_remove_provider(pid: str,
+                            x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        reg = _registry_or_409()
+        reg.remove(pid)
+        return {"removed": pid}
+
+    @app.get("/api/llm/providers/{pid}/models")
+    def llm_provider_models(pid: str):
+        reg = _registry_or_409()
+        try:
+            return {"models": reg.models(pid, force=True)}
+        except KeyError as exc:
+            raise HTTPException(404, str(exc))
+        except Exception as exc:  # noqa: BLE001 - provider unreachable
+            raise HTTPException(502, str(exc))
+
+    @app.post("/api/llm/providers/{pid}/test")
+    def llm_test_provider(pid: str):
+        reg = _registry_or_409()
+        return reg.test(pid)
+
+    @app.post("/api/llm/assign")
+    def llm_assign(body: dict = Body(...),
+                   x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        reg = _registry_or_409()
+        assignments = guard(lambda: reg.assign(
+            str(body.get("consumer", "")), body.get("provider_id") or None))
+        return {"assignments": assignments}
 
     # -------------------------------------------- exogenous inputs (M31)
     @app.get("/api/exogenous")
