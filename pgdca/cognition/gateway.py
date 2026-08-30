@@ -119,6 +119,22 @@ class LlmGateway:
             raw = self.adapter.generate(req)
             self.runtime.emit(Ev.LLM_RESPONSE,
                               {"role": role, "raw": raw}, Actor.SYSTEM)
+            # cost accounting per cognitive function (M13): adapters may
+            # report real usage in "_usage"; otherwise a deterministic
+            # size-based estimate keeps replay byte-identical
+            usage = raw.get("_usage") if isinstance(raw, dict) else None
+            if isinstance(usage, dict):
+                usage = {"input_tokens": int(usage.get("input_tokens", 0)),
+                         "output_tokens": int(usage.get("output_tokens", 0)),
+                         "estimated": False}
+            else:
+                usage = {"input_tokens":
+                         len(json.dumps(req, sort_keys=True)) // 4,
+                         "output_tokens":
+                         len(json.dumps(raw, sort_keys=True, default=str)) // 4,
+                         "estimated": True}
+            self.runtime.emit(Ev.LLM_USAGE, {"role": role, **usage},
+                              Actor.SYSTEM)
             response, errors = validate_response(raw)
             if response is not None:
                 return response
@@ -127,6 +143,31 @@ class LlmGateway:
                           {"class": "gateway_schema_error", "errors": errors},
                           Actor.SYSTEM)
         raise GatewayError(f"invalid LLM output after repair: {errors}")
+
+
+class LlmUsageProjection:
+    """Per-cognitive-function accounting of LLM calls and tokens - the
+    inference budget is a resource like money (spec: cost accounting
+    per cognitive function)."""
+
+    def __init__(self):
+        self.roles: dict[str, dict] = {}
+
+    def apply(self, ev) -> None:
+        if ev.type != Ev.LLM_USAGE.value:
+            return
+        p = ev.payload
+        r = self.roles.setdefault(p.get("role", "?"),
+                                  {"calls": 0, "input_tokens": 0,
+                                   "output_tokens": 0, "estimated": True})
+        r["calls"] += 1
+        r["input_tokens"] += int(p.get("input_tokens", 0))
+        r["output_tokens"] += int(p.get("output_tokens", 0))
+        if not p.get("estimated", True):
+            r["estimated"] = False
+
+    def snapshot(self) -> dict:
+        return {k: dict(v) for k, v in sorted(self.roles.items())}
 
 
 class ReplayLlmAdapter:

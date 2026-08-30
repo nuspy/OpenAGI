@@ -11,6 +11,7 @@ from __future__ import annotations
 from ..events import Actor, Ev, Event
 from ..security.supervisor import RISK_ORDER, RiskClass
 from .mcp_client import McpManager
+from .provenance import digest_files, pin_command, skill_package_digest
 from .registry import ToolRegistry, ToolResult, ToolSpec
 
 RISKY = RISK_ORDER[RiskClass.EXTERNAL_COMMUNICATION.value]
@@ -38,7 +39,8 @@ class CapabilityStore:
             self.mcp_servers[p["server_id"]] = {
                 "server_id": p["server_id"], "command": p["command"],
                 "tools": p["tools"], "enabled": p["enabled"],
-                "provenance": p.get("provenance", "import")}
+                "provenance": p.get("provenance", "import"),
+                "pin": p.get("pin")}
         elif t == Ev.MCP_SERVER_UPDATED.value:
             s = self.mcp_servers.get(p["server_id"])
             if s is not None:
@@ -58,11 +60,20 @@ class CapabilityManager:
     """Commands: import/enable skills and MCP servers, wire the registry."""
 
     def __init__(self, runtime, store: CapabilityStore, registry: ToolRegistry,
-                 mcp: McpManager | None = None):
+                 mcp: McpManager | None = None, config=None):
         self.runtime = runtime
         self.store = store
         self.registry = registry
-        self.mcp = mcp or McpManager()
+        if mcp is None:
+            profile = None
+            if config is not None:
+                from .sandbox import SandboxProfile
+                profile = SandboxProfile(
+                    cpu_seconds=config.sandbox_cpu_seconds,
+                    memory_bytes=config.sandbox_memory_bytes,
+                    wall_seconds=config.sandbox_wall_seconds)
+            mcp = McpManager(profile=profile)
+        self.mcp = mcp
 
     # ------------------------------------------------------------- skills
     def import_skill(self, skill: dict, actor: Actor) -> dict:
@@ -100,7 +111,8 @@ class CapabilityManager:
         self.runtime.emit(Ev.MCP_SERVER_REGISTERED,
                           {"server_id": server_id, "command": command,
                            "tools": tool_meta, "enabled": enabled,
-                           "provenance": f"mcp_import:{actor.value}"},
+                           "provenance": f"mcp_import:{actor.value}",
+                           "pin": pin_command(command)},
                           actor)
         for t in tool_meta:
             self.runtime.emit(Ev.TOOL_REGISTERED,
@@ -167,9 +179,81 @@ class CapabilityManager:
                          description_trust="untrusted"),
                 make_adapter())
 
+    def set_tool_enabled(self, name: str, enabled: bool, actor: Actor) -> None:
+        """Human-gated promotion: enabling any tool at
+        EXTERNAL_COMMUNICATION or above is a human decision (M10)."""
+        spec = next((s for s in self.registry.specs() if s.name == name), None)
+        if spec is None:
+            raise KeyError(name)
+        if (enabled and RISK_ORDER.get(spec.risk_class, 0) >= RISKY
+                and actor != Actor.HUMAN):
+            raise PermissionError("enabling a tool at EXTERNAL_COMMUNICATION "
+                                  "or above requires the human")
+        self.runtime.emit(Ev.TOOL_UPDATED,
+                          {"name": name, "changes": {"enabled": enabled}},
+                          actor)
+        self.registry.set_enabled(name, enabled)
+
+    # ------------------------------------------------- provenance (M10)
+    def verify_all(self) -> list[dict]:
+        """Re-verify every pinned capability against its import-time
+        digest. What was reviewed is what runs: a mismatch (or a missing
+        source) quarantines the capability - disabled plus an auditable
+        CAPABILITY_QUARANTINED event - never a silent re-import."""
+        quarantined: list[dict] = []
+        for s in list(self.store.skills.values()):
+            src, expected = s.get("source_path"), s.get("digest")
+            if not src or not expected:
+                continue
+            try:
+                current = skill_package_digest(src)
+            except OSError:
+                current = None
+            if current != expected:
+                self._quarantine("skill", s["name"], expected, current)
+                quarantined.append({"kind": "skill", "name": s["name"]})
+        for m in list(self.store.mcp_servers.values()):
+            pin = m.get("pin")
+            if not pin or not pin.get("digest"):
+                continue
+            try:
+                current = digest_files(*pin["paths"])
+            except OSError:
+                current = None
+            if current != pin["digest"]:
+                self._quarantine("mcp_server", m["server_id"],
+                                 pin["digest"], current)
+                quarantined.append({"kind": "mcp_server",
+                                    "name": m["server_id"]})
+        return quarantined
+
+    def _quarantine(self, kind: str, name: str, expected: str,
+                    found: str | None) -> None:
+        changes = {"enabled": False, "status": "QUARANTINED",
+                   "quarantine": "content changed since import "
+                                 "(digest mismatch)"}
+        if kind == "skill":
+            self.runtime.emit(Ev.SKILL_UPDATED,
+                              {"name": name, "changes": changes},
+                              Actor.SUPERVISOR)
+        else:
+            self.runtime.emit(Ev.MCP_SERVER_UPDATED,
+                              {"server_id": name, "changes": changes},
+                              Actor.SUPERVISOR)
+            server = self.store.mcp_servers.get(name, {})
+            for t in server.get("tools", []):
+                self.registry.set_enabled(f"{name}.{t['name']}", False)
+        self.runtime.emit(Ev.CAPABILITY_QUARANTINED,
+                          {"kind": kind, "name": name,
+                           "expected_digest": expected,
+                           "found_digest": found}, Actor.SUPERVISOR)
+
     def restore_registry(self) -> None:
         """After recovery: re-register MCP tools from the projection with
-        lazy connections (the server process reconnects on first call)."""
+        lazy connections, then re-verify pinned content - a capability
+        whose code changed across the restart comes back quarantined,
+        not armed."""
         for s in self.store.mcp_servers.values():
             self._register_server_tools(s["server_id"], s["command"],
                                         s["tools"], s["enabled"])
+        self.verify_all()

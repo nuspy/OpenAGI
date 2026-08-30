@@ -46,7 +46,7 @@
   .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
   .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600}
   .pill.GRANTED,.pill.ACTIVE,.pill.COMPLETED{background:#ecfdf5;color:var(--ok)}
-  .pill.DENIED,.pill.INVALIDATED{background:#fef2f2;color:var(--bad)}
+  .pill.DENIED,.pill.INVALIDATED,.pill.QUARANTINED{background:#fef2f2;color:var(--bad)}
   .pill.HUMAN_REQUIRED,.pill.PENDING_HUMAN,.pill.SHADOW,.pill.SUPERSEDED{background:#fffbeb;color:var(--warn)}
   .pill.DEFERRED,.pill.DISABLED{background:#eff6ff;color:#2563eb}
   .pill.SUCCESSFUL{background:#ecfdf5;color:var(--ok)} .pill.PRUNED,.pill.FAILED{background:#fef2f2;color:var(--bad)}
@@ -149,7 +149,9 @@
       </form>
     </div>
   </div>
-  <div class="panel" style="margin-top:12px"><h3>Tool registry</h3><table id="tooltable"></table></div>
+  <div class="panel" style="margin-top:12px"><h3>Tool registry
+    <button style="float:right" onclick="verifyCaps()" title="re-check every imported capability against its import-time digest">Verify integrity</button></h3>
+    <table id="tooltable"></table></div>
 </main>
 
 <main id="tab-journal"><div class="panel"><table id="journal"></table></div></main>
@@ -160,6 +162,7 @@
     <div class="panel"><h3>Self-model <span class="muted">(claims calibrated by observation)</span></h3><table id="selfmodel"></table></div>
     <div class="panel"><h3>Contradictions <span class="muted">(claims are never silently overwritten)</span></h3><table id="contradictions"></table></div>
   </div>
+  <div class="panel" style="margin-top:12px"><h3>LLM usage per cognitive function <span class="muted">(inference is a budgeted resource)</span></h3><table id="llmusage"></table></div>
 </main>
 <main id="tab-events"><div class="panel" id="events"></div></main>
 
@@ -399,6 +402,12 @@ async function importMcp(ev){
 }
 async function setSkill(name,enabled){await post('/skills/'+name,{enabled}).catch(alert);refresh()}
 async function approveMcp(id){await post('/mcp/'+id+'/approve').catch(alert);refresh()}
+async function setTool(name,enabled){await post('/tools/'+encodeURIComponent(name),{enabled}).catch(alert);refresh()}
+async function verifyCaps(){
+  const r=await post('/capabilities/verify').catch(alert);
+  if(r)alert(r.quarantined.length?('QUARANTINED: '+r.quarantined.map(q=>q.kind+' '+q.name).join(', ')):'all imported capabilities match their import-time digests');
+  refresh();
+}
 
 async function createGuardrail(ev){
   ev.preventDefault();
@@ -448,19 +457,24 @@ async function refresh(){
       }).join('');
 
     const caps=await api('/capabilities');
-    $('#skilltable').innerHTML='<tr><th>name</th><th>description</th><th>risk</th><th>status</th><th></th></tr>'+
-      (caps.skills.map(s=>`<tr><td class="mono">${s.name}</td><td>${s.description}</td>
-        <td>${s.risk_class}</td><td><span class="pill ${s.enabled?'ACTIVE':(s.status||'DISABLED')}">${s.enabled?'ACTIVE':(s.status||'DISABLED')}</span></td>
-        <td><button onclick="setSkill('${s.name}',${!s.enabled})">${s.enabled?'Disable':'Enable'}</button></td></tr>`).join('')||'<tr><td class="muted" colspan="5">no skills imported</td></tr>');
-    $('#mcptable').innerHTML='<tr><th>server</th><th>tools</th><th>status</th><th></th></tr>'+
-      (caps.mcp_servers.map(s=>`<tr><td class="mono">${s.server_id}</td>
+    $('#skilltable').innerHTML='<tr><th>name</th><th>description</th><th>risk</th><th>digest</th><th>status</th><th></th></tr>'+
+      (caps.skills.map(s=>{const st=s.status==='QUARANTINED'?'QUARANTINED':(s.enabled?'ACTIVE':(s.status||'DISABLED'));
+        return `<tr><td class="mono">${s.name}</td><td>${s.description}</td>
+        <td>${s.risk_class}</td><td class="mono">${s.digest||'—'}</td>
+        <td><span class="pill ${st}">${st}</span>${s.quarantine?`<div class="muted" style="font-size:11px">${s.quarantine}</div>`:''}</td>
+        <td>${st==='QUARANTINED'?'':`<button onclick="setSkill('${s.name}',${!s.enabled})">${s.enabled?'Disable':'Enable'}</button>`}</td></tr>`}).join('')||'<tr><td class="muted" colspan="6">no skills imported</td></tr>');
+    $('#mcptable').innerHTML='<tr><th>server</th><th>tools</th><th>pin</th><th>status</th><th></th></tr>'+
+      (caps.mcp_servers.map(s=>{const st=s.status==='QUARANTINED'?'QUARANTINED':(s.enabled?'ACTIVE':'PENDING_HUMAN');
+        return `<tr><td class="mono">${s.server_id}</td>
         <td>${s.tools.map(t=>t.name).join(', ')}</td>
-        <td><span class="pill ${s.enabled?'ACTIVE':'PENDING_HUMAN'}">${s.enabled?'ACTIVE':'PENDING_HUMAN'}</span></td>
-        <td>${s.enabled?'':`<button class="ok" onclick="approveMcp('${s.server_id}')">Approve</button>`}</td></tr>`).join('')||'<tr><td class="muted" colspan="4">no MCP servers imported</td></tr>');
-    $('#tooltable').innerHTML='<tr><th>tool</th><th>risk class</th><th>origin</th><th>description</th><th>status</th></tr>'+
+        <td class="mono">${(s.pin&&s.pin.digest)||'unpinned'}</td>
+        <td><span class="pill ${st}">${st}</span>${s.quarantine?`<div class="muted" style="font-size:11px">${s.quarantine}</div>`:''}</td>
+        <td>${st==='ACTIVE'||st==='QUARANTINED'?'':`<button class="ok" onclick="approveMcp('${s.server_id}')">Approve</button>`}</td></tr>`}).join('')||'<tr><td class="muted" colspan="5">no MCP servers imported</td></tr>');
+    $('#tooltable').innerHTML='<tr><th>tool</th><th>risk class</th><th>origin</th><th>description</th><th>status</th><th></th></tr>'+
       caps.tools.map(t=>`<tr><td class="mono">${t.name}</td><td>${t.risk_class}</td><td class="muted">${t.provenance}</td>
         <td class="muted">${t.description}${t.description_trust==='untrusted'?' <span class="pill DENIED">untrusted text</span>':''}</td>
-        <td><span class="pill ${t.enabled?'ACTIVE':'DISABLED'}">${t.enabled?'ACTIVE':'DISABLED'}</span></td></tr>`).join('');
+        <td><span class="pill ${t.enabled?'ACTIVE':'DISABLED'}">${t.enabled?'ACTIVE':'DISABLED'}</span></td>
+        <td><button onclick="setTool('${t.name}',${!t.enabled})">${t.enabled?'Disable':'Enable'}</button></td></tr>`).join('');
 
     const strats=await api('/strategies');
     $('#strategies').innerHTML='<tr><th>id</th><th>label</th><th>status</th><th>step</th><th>score</th><th></th></tr>'+
@@ -490,6 +504,13 @@ async function refresh(){
       pols.map(p=>`<tr><td class="mono">${p.id}</td><td>${p.description}</td>
         <td><span class="pill ${p.status}">${p.status}</span></td>
         <td>${p.evidence_count}</td><td>${p.agreements}</td><td class="muted">${p.provenance}</td></tr>`).join('');
+
+    const lu=await api('/llmusage');
+    $('#llmusage').innerHTML='<tr><th>cognitive function</th><th>calls</th><th>input tokens</th><th>output tokens</th><th></th></tr>'+
+      (Object.entries(lu).map(([k,v])=>`<tr><td class="mono">${k}</td><td>${v.calls}</td>
+        <td>${v.input_tokens}</td><td>${v.output_tokens}</td>
+        <td class="muted">${v.estimated?'estimated (size-based)':'reported by adapter'}</td></tr>`).join('')
+       ||'<tr><td class="muted" colspan="5">no LLM calls yet</td></tr>');
 
     const dels=await api('/deliberations');
     const openThreads=dels.filter(t=>t.status==='OPEN');

@@ -53,10 +53,14 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 
 class AnthropicLlmAdapter:
     def __init__(self, model: str | None = None, client=None,
-                 max_tokens: int = 16000, use_fallbacks: bool = True):
+                 max_tokens: int = 16000, use_fallbacks: bool = True,
+                 model_by_role: dict | None = None):
         self.model = model or os.environ.get("PGDCA_LLM_MODEL", DEFAULT_MODEL)
         self.max_tokens = max_tokens
         self.use_fallbacks = use_fallbacks
+        # M13 routing: cheaper models for classification-shaped functions,
+        # the strongest for open reasoning - per cognitive function
+        self.model_by_role = dict(model_by_role or {})
         if client is None:
             import anthropic  # deferred: optional dependency
             client = anthropic.Anthropic()
@@ -64,7 +68,7 @@ class AnthropicLlmAdapter:
 
     def generate(self, request: dict) -> dict:
         kwargs = dict(
-            model=self.model,
+            model=self.model_by_role.get(request.get("role"), self.model),
             max_tokens=self.max_tokens,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user",
@@ -82,7 +86,13 @@ class AnthropicLlmAdapter:
                                f"({getattr(response, 'stop_details', None)})")
         text = "".join(getattr(b, "text", "") for b in response.content
                        if getattr(b, "type", "") == "text")
-        return _extract_json(text)
+        obj = _extract_json(text)
+        usage = getattr(response, "usage", None)
+        if usage is not None and isinstance(obj, dict):
+            obj["_usage"] = {
+                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0)}
+        return obj
 
 
 def _extract_json(text: str) -> dict:

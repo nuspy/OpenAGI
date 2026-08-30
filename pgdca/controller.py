@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .arbitration import score_candidates
-from .cognition.gateway import Hypothesis, LlmGateway
+from .cognition.gateway import Hypothesis, LlmGateway, LlmUsageProjection
 from .collaboration.deliberation import (DeliberationEngine,
                                          DeliberationProjection)
 from .config import Config
@@ -83,7 +83,8 @@ class Controller:
         self.registry = registry
         self.capability_store = runtime.register(CapabilityStore())
         self.capabilities = CapabilityManager(runtime, self.capability_store,
-                                              registry)
+                                              registry, config=self.config)
+        self.llm_usage = runtime.register(LlmUsageProjection())
         self.strategies = runtime.register(StrategyProjection())
         self.strategy_engine = StrategyEngine(runtime, self.strategies,
                                               self.gateway, self.graph,
@@ -247,6 +248,12 @@ class Controller:
 
     def approve_mcp_server(self, server_id: str, actor: Actor) -> None:
         self.capabilities.approve_mcp_server(server_id, actor)
+
+    def set_tool_enabled(self, name: str, enabled: bool, actor: Actor) -> None:
+        self.capabilities.set_tool_enabled(name, enabled, actor)
+
+    def verify_capabilities(self) -> list[dict]:
+        return self.capabilities.verify_all()
 
     # ---------------------------------------------------- human decisions
     def pending_decision(self) -> dict | None:

@@ -15,13 +15,13 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-**Phase 4 implemented and green** (82 tests): the Deliberation component (M27) — human-AI co-decision threads on any decision, node, strategy or contradiction, with evidence-grounded generative answers, binding human-only outcomes (confirm / modify-as-HUMAN_EDIT / cancel with denial, compensated revocation or strategy replan), escalations that open system-authored threads, dissent feeding future verdict advisories, and an SSE-live console — see [`docs/PHASE4.md`](docs/PHASE4.md). Earlier slices: [`docs/PHASE3.md`](docs/PHASE3.md) (counterfactual regret with the dq≠oq "bad luck ≠ bad judgment" distinction, calibrated self-model, recurrence advisories, contradiction management, graph hygiene, compensation), [`docs/PHASE2.md`](docs/PHASE2.md) (typed external ports — voice/Call Happy Call, email, SMS, browser, vault, identity — mocks + conformance here, real adapters in local development per [`docs/LOCAL_INTEGRATIONS.md`](docs/LOCAL_INTEGRATIONS.md); strategy branching with full lifecycle), [`docs/PHASE1.md`](docs/PHASE1.md) (recovery, skills/MCP import M28, reference adapter, dynamic reprioritization), [`docs/PHASE0.md`](docs/PHASE0.md) (Minimum Viable Loop + spec-traceability matrix). Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
+**Phase 5 implemented and green** (94 tests): capability-acquisition hardening (M10) and inference accounting (M13) — sandbox-first execution of imported code (rlimits, whitelisted environment, isolated cwd, wall-clock kill), provenance digests + command pinning with restart-time re-verification and QUARANTINED-not-silently-reimported semantics, human-gated tool promotion, per-cognitive-function LLM usage accounting and per-role model routing — see [`docs/PHASE5.md`](docs/PHASE5.md). Earlier slices: [`docs/PHASE4.md`](docs/PHASE4.md) (Deliberation M27: co-decision threads with evidence-grounded answers, binding human-only outcomes, escalation-as-thread, dissent advisories, SSE-live console), [`docs/PHASE3.md`](docs/PHASE3.md) (counterfactual regret with the dq≠oq "bad luck ≠ bad judgment" distinction, calibrated self-model, recurrence advisories, contradiction management, graph hygiene, compensation), [`docs/PHASE2.md`](docs/PHASE2.md) (typed external ports — voice/Call Happy Call, email, SMS, browser, vault, identity — mocks + conformance here, real adapters in local development per [`docs/LOCAL_INTEGRATIONS.md`](docs/LOCAL_INTEGRATIONS.md); strategy branching with full lifecycle), [`docs/PHASE1.md`](docs/PHASE1.md) (recovery, skills/MCP import M28, reference adapter, dynamic reprioritization), [`docs/PHASE0.md`](docs/PHASE0.md) (Minimum Viable Loop + spec-traceability matrix). Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
 
 ## Quickstart
 
 ```bash
 pip install -e ".[api,dev]"            # + ".[anthropic]" for the reference adapter
-pytest                                 # 82 tests incl. acceptance scenarios + deterministic replay
+pytest                                 # 94 tests incl. acceptance scenarios + deterministic replay
 python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
 python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
 python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at http://127.0.0.1:8000
@@ -43,7 +43,8 @@ pgdca/
   collaboration/                deliberation threads (co-decision, escalation-as-thread)
   controller.py                 deterministic controller + cognitive cycle + recovery
   ports/                        voice, email/SMS, browser, vault/identity (Protocol+mock+conformance)
-  tools/                        registry, skill packages, MCP client, capability store, port wiring
+  tools/                        registry, skill packages, MCP client, capability store, port wiring,
+                                sandbox (rlimits/env-whitelist), provenance digests + quarantine
   scenario/                     toy acceptance scenario + opportunity reprioritization
   api/ ui/                      FastAPI backend + single-file web GUI
 examples/                       sample skill package, sample MCP server, local adapter skeletons

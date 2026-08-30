@@ -60,5 +60,11 @@ class Config:
 
     # --- LLM gateway ---
     gateway_max_repairs: int = 1
+    role_models: dict = field(default_factory=dict)  # cognitive function -> model id (M13 routing)
+
+    # --- capability-acquisition sandbox (M10) ---
+    sandbox_cpu_seconds: int = 10
+    sandbox_memory_bytes: int = 512 * 1024 * 1024
+    sandbox_wall_seconds: float = 15.0
 
     extra: dict = field(default_factory=dict)

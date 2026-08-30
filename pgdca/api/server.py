@@ -256,6 +256,21 @@ def create_app(ctrl: Controller) -> FastAPI:
         guard(lambda: ctrl.approve_mcp_server(server_id, _actor(x_actor)))
         return {"ok": True}
 
+    @app.post("/api/tools/{name}")
+    def set_tool(name: str, body: dict = Body(...),
+                 x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.set_tool_enabled(name, bool(body.get("enabled")),
+                                            _actor(x_actor)))
+        return {"ok": True}
+
+    @app.post("/api/capabilities/verify")
+    def verify_capabilities():
+        return {"quarantined": ctrl.verify_capabilities()}
+
+    @app.get("/api/llmusage")
+    def llm_usage():
+        return ctrl.llm_usage.snapshot()
+
     # ---------------------------------------------------------- control
     @app.post("/api/control/{command}")
     def control(command: str, x_actor: str | None = Header(default=None)):

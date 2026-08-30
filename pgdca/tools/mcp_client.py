@@ -9,8 +9,10 @@ supervisor gates as every other tool.
 
 This is a deliberately small, dependency-free stdio client (newline-
 delimited JSON-RPC 2.0). Swapping in the official SDK later is an
-adapter change behind the same port. Subprocess isolation is the
-Phase 1 sandbox boundary; a hardened sandbox is a later slice.
+adapter change behind the same port. Server processes launch inside
+the M10 sandbox: resource limits, whitelisted environment (no
+credential leakage into acquired code), isolated working directory,
+process-group termination.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ import json
 import select
 import subprocess
 from dataclasses import dataclass
+
+from .sandbox import SandboxProfile, kill_sandboxed, sandbox_popen
 
 PROTOCOL_VERSION = "2025-06-18"
 
@@ -34,17 +38,20 @@ class McpTool:
 
 
 class McpConnection:
-    def __init__(self, command: list[str], timeout: float = 10.0):
+    def __init__(self, command: list[str], timeout: float = 10.0,
+                 profile: SandboxProfile | None = None):
         self.command = command
         self.timeout = timeout
+        self.profile = profile or SandboxProfile()
         self._proc: subprocess.Popen | None = None
         self._next_id = 0
 
     # ------------------------------------------------------------ plumbing
     def _ensure(self) -> subprocess.Popen:
         if self._proc is None or self._proc.poll() is not None:
-            self._proc = subprocess.Popen(
-                self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            self._proc = sandbox_popen(
+                self.command, self.profile,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, bufsize=1)
             self._handshake()
         return self._proc
@@ -109,25 +116,22 @@ class McpConnection:
                 "raw": result}
 
     def close(self) -> None:
-        if self._proc is not None and self._proc.poll() is None:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
-            except Exception:  # noqa: BLE001
-                self._proc.kill()
+        if self._proc is not None:
+            kill_sandboxed(self._proc)
         self._proc = None
 
 
 class McpManager:
     """Holds (lazily connected) MCP server connections by server id."""
 
-    def __init__(self):
+    def __init__(self, profile: SandboxProfile | None = None):
+        self.profile = profile
         self._conns: dict[str, McpConnection] = {}
 
     def connection(self, server_id: str, command: list[str]) -> McpConnection:
         conn = self._conns.get(server_id)
         if conn is None:
-            conn = McpConnection(command)
+            conn = McpConnection(command, profile=self.profile)
             self._conns[server_id] = conn
         return conn
 

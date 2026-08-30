@@ -55,6 +55,7 @@ def load_skill_package(path: str | Path) -> dict:
         raise SkillValidationError("; ".join(errors))
 
     instructions = instructions_file.read_text(encoding="utf-8")[:MAX_INSTRUCTIONS]
+    from .provenance import skill_package_digest
     return {
         "name": name,
         "description": str(manifest["description"]),
@@ -64,6 +65,8 @@ def load_skill_package(path: str | Path) -> dict:
         "instructions": instructions,
         "provenance": "imported",
         "trust": "untrusted",   # skill text is data, never instructions to PGDCA
+        "source_path": str(p),
+        "digest": skill_package_digest(p),   # what was reviewed is what runs
     }
 
 
