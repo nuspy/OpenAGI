@@ -72,7 +72,7 @@ def test_context_tools_carry_params_contract(ctrl_env):
     """A real model cannot guess params from a bare tool name: the briefing
     ships name + description (with the params contract) + risk class."""
     ctrl, _ = ctrl_env
-    tools = ctrl._context()["tools"]
+    tools = ctrl._build_context()["tools"]
     research = next(t for t in tools if t["name"] == "research_price")
     assert "factor_id" in research["description"]
     assert research["risk_class"] == RiskClass.READ_ONLY.value
