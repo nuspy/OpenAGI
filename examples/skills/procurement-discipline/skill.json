@@ -1,0 +1,7 @@
+{
+  "name": "procurement-discipline",
+  "description": "Procedural discipline for purchases under budget constraints",
+  "version": "1.0.0",
+  "risk_class": "READ_ONLY",
+  "triggers": ["purchase", "procurement", "budget", "boots", "price"]
+}

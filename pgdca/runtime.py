@@ -29,6 +29,9 @@ class DeterministicClock:
         self._t += timedelta(seconds=1)
         return self._t.isoformat()
 
+    def advance(self, seconds: int) -> None:
+        self._t += timedelta(seconds=seconds)
+
 
 class WallClock:
     def now(self) -> str:

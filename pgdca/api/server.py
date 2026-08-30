@@ -69,6 +69,16 @@ def create_app(ctrl: Controller) -> FastAPI:
     def policies():
         return ctrl.policies.snapshot()
 
+    @app.get("/api/capabilities")
+    def capabilities():
+        snap = ctrl.capability_store.snapshot()
+        snap["tools"] = [{"name": s.name, "risk_class": s.risk_class,
+                          "description": s.description, "enabled": s.enabled,
+                          "provenance": s.provenance,
+                          "description_trust": s.description_trust}
+                         for s in ctrl.registry.specs()]
+        return snap
+
     @app.get("/api/inbox")
     def inbox():
         return {"pending": list(ctrl.inbox.pending.values()),
@@ -181,6 +191,40 @@ def create_app(ctrl: Controller) -> FastAPI:
         cid = ctrl.ingest_external(body["text"], body.get("source", "gui"))
         return {"content_id": cid}
 
+    # ------------------------------------------------------- capabilities
+    @app.post("/api/skills/import")
+    def import_skill(body: dict = Body(...),
+                     x_actor: str | None = Header(default=None)):
+        try:
+            return guard(lambda: ctrl.import_skill(body["path"], _actor(x_actor)))
+        except Exception as exc:  # validation errors -> 400
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/skills/{name}")
+    def set_skill(name: str, body: dict = Body(...),
+                  x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.set_skill_enabled(name, bool(body.get("enabled")),
+                                             _actor(x_actor)))
+        return {"ok": True}
+
+    @app.post("/api/mcp/import")
+    def import_mcp(body: dict = Body(...),
+                   x_actor: str | None = Header(default=None)):
+        try:
+            return guard(lambda: ctrl.import_mcp_server(
+                body["server_id"], list(body["command"]), _actor(x_actor)))
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/mcp/{server_id}/approve")
+    def approve_mcp(server_id: str, x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.approve_mcp_server(server_id, _actor(x_actor)))
+        return {"ok": True}
+
     # ---------------------------------------------------------- control
     @app.post("/api/control/{command}")
     def control(command: str, x_actor: str | None = Header(default=None)):
@@ -239,12 +283,20 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
 
     from ..scenario.toy import create
 
-    parser = argparse.ArgumentParser(description="PGDCA Phase 0 server")
+    parser = argparse.ArgumentParser(description="PGDCA server")
     parser.add_argument("--db", default=":memory:", help="event store path")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--adapter", choices=["mock", "anthropic"], default="mock",
+                        help="LLM adapter behind the port (anthropic requires "
+                             "the SDK and credentials; server-side refusal "
+                             "fallbacks are enabled by default)")
     args = parser.parse_args()
 
-    ctrl, _env = create(db_path=args.db)
+    adapter = None
+    if args.adapter == "anthropic":
+        from ..cognition.anthropic_adapter import AnthropicLlmAdapter
+        adapter = AnthropicLlmAdapter()
+    ctrl, _env = create(db_path=args.db, adapter=adapter)
     app = create_app(ctrl)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 

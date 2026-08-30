@@ -184,11 +184,13 @@ def create(db_path: str = ":memory:", config: Config | None = None,
            build: bool = True) -> tuple[Controller, ToyEnvironment]:
     env = env or ToyEnvironment()
     runtime = Runtime(SqliteEventStore(db_path), DeterministicClock())
+    fresh = runtime.store.last_seq() == 0
     ctrl = Controller(runtime, adapter or MockLlmAdapter(),
                       make_registry(env), config or Config())
-    if build:
+    if build and fresh:
         build_world(ctrl)
-    ctrl.state = ctrl.state  # INITIALIZING until first step
+    if not fresh:
+        ctrl.recover()   # resume from an existing event store
     return ctrl, env
 
 

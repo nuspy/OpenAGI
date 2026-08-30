@@ -28,7 +28,9 @@ from .security.guardrails import Flexibility, GuardrailStore, guardrail
 from .security.supervisor import (DecisionKind, InboxProjection,
                                   ProposedDecision, Supervisor, VerdictStatus)
 from .security.taint import TaintTracker
+from .tools.capabilities import CapabilityManager, CapabilityStore
 from .tools.registry import ToolRegistry
+from .tools.skills import load_skill_package, matches_context
 
 
 class SysState(str, Enum):
@@ -73,6 +75,9 @@ class Controller:
         self.policy_engine = PolicyEngine(runtime, self.policies, self.gateway,
                                           self.config)
         self.registry = registry
+        self.capability_store = runtime.register(CapabilityStore())
+        self.capabilities = CapabilityManager(runtime, self.capability_store,
+                                              registry)
 
         self.state = SysState.INITIALIZING
         self.cycle = 0
@@ -96,8 +101,10 @@ class Controller:
             self._paused = True
             self._set_state(SysState.PAUSED)
         elif cmd == "RESUME":
+            # an explicit human RESUME clears both PAUSE and a (recovered) STOP
             self._paused = False
-            if self.state == SysState.PAUSED:
+            self._stop = False
+            if self.state in (SysState.PAUSED, SysState.STOPPED):
                 self._set_state(SysState.IDLE)
 
     def _set_state(self, s: SysState) -> None:
@@ -108,6 +115,66 @@ class Controller:
     def _check_control(self) -> None:
         if self._stop:
             raise _Stopped()
+
+    # ------------------------------------------------------------ recovery
+    def recover(self) -> None:
+        """Restore volatile controller state from the event log after a
+        restart. Projections already caught up at registration; here we
+        rebuild what is not a projection: cycle counter, deterministic id
+        counters, pending human decision, denied signatures, emitted
+        conflicts, control state, MCP registry wiring, logical clock."""
+        events = self.runtime.events()
+        if not events:
+            return
+        import json as _json
+        import re as _re
+        counters: dict[str, int] = {}
+        id_re = _re.compile(r'"((?:dec|ver|pol|polseed|gr2|goal)_)(\d+)"')
+        last_cycle = 0
+        last_control: str | None = None
+        for ev in events:
+            if ev.type == Ev.CYCLE_STARTED.value:
+                last_cycle = max(last_cycle, int(ev.payload.get("cycle", 0)))
+            elif ev.type == Ev.CONTROL_COMMAND.value:
+                last_control = ev.payload.get("command")
+            elif ev.type == Ev.HYPOTHESIS_PRUNED.value:
+                rec = self.journal.records.get(ev.payload.get("decision_id", ""))
+                if rec is not None:
+                    self._denied_signatures.add(self._signature(rec["decision"]))
+            elif ev.type == Ev.CONFLICT_DETECTED.value:
+                self._conflicts_emitted.add(("conflict", ev.payload.get("factor")))
+            for prefix, num in id_re.findall(_json.dumps(ev.payload)):
+                key = prefix.rstrip("_")
+                counters[key] = max(counters.get(key, 0), int(num))
+        self.runtime._id_counters.update(
+            {k: max(v, self.runtime._id_counters.get(k, 0))
+             for k, v in counters.items()})
+        self.cycle = last_cycle
+        self.runtime.cycle = last_cycle or None
+        if hasattr(self.runtime.clock, "advance"):
+            self.runtime.clock.advance(len(events))
+        # pending human decision survives via the inbox projection
+        if self.inbox.pending:
+            vid, entry = sorted(self.inbox.pending.items())[-1]
+            d = entry["decision"]
+            decision = ProposedDecision(**{k: d[k] for k in (
+                "kind", "action_name", "params", "cost", "risk_class", "goal_refs",
+                "derived_from", "tainted", "expected", "success_prob",
+                "rationale", "id")})
+            self._pending = {"decision": decision, "verdict": entry["verdict"]}
+        # control state: last STOP/PAUSE without a later RESUME persists
+        if last_control == "STOP":
+            self._stop = True
+            self.state = SysState.STOPPED
+        elif last_control == "PAUSE":
+            self._paused = True
+            self.state = SysState.PAUSED
+        elif self._pending is not None:
+            self.state = SysState.WAITING_HUMAN
+        else:
+            self.state = SysState.IDLE
+        # re-register imported MCP tools (lazy reconnection on first call)
+        self.capabilities.restore_registry()
 
     # ------------------------------------------------------------ commands
     def ingest_external(self, text: str, source: str) -> str:
@@ -143,6 +210,23 @@ class Controller:
 
     def set_budget(self, name: str, limit: float, actor: Actor) -> None:
         set_budget(self.runtime, name, limit, actor)
+
+    # -------------------------------------------------------- capabilities
+    def import_skill(self, path: str, actor: Actor) -> dict:
+        """Import a skill package (M28); risky skills imported by the
+        system stay disabled until the human approves."""
+        skill = load_skill_package(path)
+        return self.capabilities.import_skill(skill, actor)
+
+    def set_skill_enabled(self, name: str, enabled: bool, actor: Actor) -> None:
+        self.capabilities.set_skill_enabled(name, enabled, actor)
+
+    def import_mcp_server(self, server_id: str, command: list[str],
+                          actor: Actor) -> dict:
+        return self.capabilities.import_mcp_server(server_id, command, actor)
+
+    def approve_mcp_server(self, server_id: str, actor: Actor) -> None:
+        self.capabilities.approve_mcp_server(server_id, actor)
 
     # ---------------------------------------------------- human decisions
     def pending_decision(self) -> dict | None:
@@ -382,10 +466,21 @@ class Controller:
                             "cost_confidence": p.get("cost_confidence", 0.3),
                             "quantity_needed": p.get("quantity_needed", 1),
                             "acquired_qty": p.get("acquired_qty", 0)})
+        goals = [{"id": g["id"], "label": g["label"],
+                  "priority": g["props"].get("priority", 0.5)}
+                 for g in sorted(self.graph.active_goals(), key=lambda x: x["id"])]
+        tools = self.registry.names()
+        # progressive disclosure: only skills triggered by the current
+        # context enter the briefing; their text stays labeled untrusted
+        context_text = " ".join(
+            [g["label"] for g in goals] + [f["id"] for f in factors]
+            + [f["label"] for f in factors] + tools + ["purchase budget"])
+        skills = [{"name": s["name"], "description": s["description"],
+                   "instructions": s["instructions"], "trust": s["trust"]}
+                  for s in self.capability_store.enabled_skills()
+                  if matches_context(s, context_text)]
         return {
-            "goals": [{"id": g["id"], "label": g["label"],
-                       "priority": g["props"].get("priority", 0.5)}
-                      for g in sorted(self.graph.active_goals(), key=lambda x: x["id"])],
+            "goals": goals,
             "factors": factors,
             "budget": {"money": {"limit": self.budgets.limit("money"),
                                  "remaining": self.budgets.remaining("money")}},
@@ -397,7 +492,8 @@ class Controller:
                 for c in self.taint.contents],
             "policies": [p["description"] for p in
                          self.policies.matching({"ACTIVE"})],
-            "tools": self.registry.names(),
+            "skills": skills,
+            "tools": tools,
         }
 
     def _reconcile(self) -> None:
@@ -436,6 +532,51 @@ class Controller:
                                    "substitutions": [{"factor": f, "by": s}
                                                      for f, s, _ in substituted]},
                                   Actor.SYSTEM)
+        # dynamic reprioritization: a target whose every acquisition route
+        # (factor and substitutes) has a KNOWN cost above the remaining
+        # budget is DEFERRED - revisitable, not abandoned - freeing
+        # resources and attention for higher-value pursuits.
+        remaining = self.budgets.remaining("money")
+        for t in self.graph.open_targets():
+            required = self.graph.in_edges(t["id"], {RelType.REQUIRED})
+            if not required:
+                continue
+            starved = None
+            for e in required:
+                f = self.graph.node(e["src"])
+                if f is None:
+                    continue
+                fp = f["props"]
+                if fp.get("acquired_qty", 0) >= fp.get("quantity_needed", 1):
+                    continue
+                options = [f] + [self.graph.node(s)
+                                 for s in self.graph.substitutes_of(f["id"])]
+                affordable = False
+                for o in options:
+                    if o is None or o["status"] != NodeStatus.ACTIVE.value:
+                        continue
+                    op = o["props"]
+                    cost = op.get("unit_cost")
+                    need = op.get("quantity_needed", 1) - op.get("acquired_qty", 0)
+                    if cost is None or cost * max(need, 0) <= remaining:
+                        affordable = True
+                        break
+                if not affordable:
+                    starved = f["id"]
+                    break
+            if starved is not None:
+                self.runtime.emit(Ev.TARGET_DEFERRED,
+                                  {"node_id": t["id"], "factor": starved,
+                                   "reason": "no affordable acquisition route "
+                                             "within the remaining budget"},
+                                  Actor.SYSTEM)
+                self.runtime.emit(Ev.RESOURCE_REALLOCATED,
+                                  {"resource": "money", "away_from": t["id"],
+                                   "remaining": remaining,
+                                   "reason": "budget reallocated toward "
+                                             "higher-value active pursuits"},
+                                  Actor.SYSTEM)
+
         # periodic goal re-evaluation (review_interval per node)
         for g in self.graph.active_goals():
             last = g["props"].get("last_review_cycle", 0)

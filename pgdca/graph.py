@@ -46,6 +46,11 @@ class GraphProjection:
             if n is not None:
                 n["status"] = NodeStatus.COMPLETED.value
                 self.dirty.add(n["id"])
+        elif t == Ev.TARGET_DEFERRED.value:
+            n = self.nodes.get(p["node_id"])
+            if n is not None:
+                n["status"] = NodeStatus.DEFERRED.value
+                self.dirty.add(n["id"])
         elif t == Ev.EDGE_ADDED.value:
             e = p["edge"]
             self.edges[e["id"]] = e

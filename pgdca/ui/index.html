@@ -48,6 +48,7 @@
   .pill.GRANTED,.pill.ACTIVE,.pill.COMPLETED{background:#ecfdf5;color:var(--ok)}
   .pill.DENIED,.pill.INVALIDATED{background:#fef2f2;color:var(--bad)}
   .pill.HUMAN_REQUIRED,.pill.PENDING_HUMAN,.pill.SHADOW,.pill.SUPERSEDED{background:#fffbeb;color:var(--warn)}
+  .pill.DEFERRED,.pill.DISABLED{background:#eff6ff;color:#2563eb}
   .pill.t1{background:#eef2ff;color:var(--accent)} .pill.t2{background:#f1f5f9;color:var(--muted)}
   dialog{border:1px solid var(--line);border-radius:12px;max-width:720px;width:90%;max-height:80vh;overflow:auto}
   dialog::backdrop{background:rgba(15,23,42,.35)}
@@ -80,6 +81,7 @@
   <button data-tab="graph" class="active">Graph</button>
   <button data-tab="inbox">Decision inbox <span id="pcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails">Guardrails</button>
+  <button data-tab="capabilities">Capabilities</button>
   <button data-tab="journal">Journal</button>
   <button data-tab="policies">Policies</button>
   <button data-tab="events">Events</button>
@@ -112,6 +114,25 @@
       </form>
     </div>
   </div>
+</main>
+
+<main id="tab-capabilities">
+  <div class="grid2">
+    <div class="panel"><h3>Imported skills</h3><table id="skilltable"></table>
+      <form class="gr" onsubmit="return importSkill(event)" style="margin-top:10px">
+        <label>Skill package path<input id="sk-path" placeholder="examples/skills/procurement-discipline" required></label>
+        <button class="primary">Import skill</button>
+      </form>
+    </div>
+    <div class="panel"><h3>MCP servers</h3><table id="mcptable"></table>
+      <form class="gr" onsubmit="return importMcp(event)" style="margin-top:10px">
+        <label>Server id<input id="mcp-id" placeholder="market" required></label>
+        <label>Command (JSON array)<input id="mcp-cmd" placeholder='["python3","examples/mcp/toy_market_server.py"]' required></label>
+        <button class="primary">Import MCP server</button>
+      </form>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:12px"><h3>Tool registry</h3><table id="tooltable"></table></div>
 </main>
 
 <main id="tab-journal"><div class="panel"><table id="journal"></table></div></main>
@@ -179,12 +200,13 @@ function drawGraph(g){
     r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('rx',9);r.setAttribute('width',W);r.setAttribute('height',H);
     r.setAttribute('fill',KINDFILL[n.kind]||'#f8fafc');r.setAttribute('stroke',KINDSTROKE[n.kind]||'#94a3b8');
     if(['SUPERSEDED','INVALIDATED','ABANDONED'].includes(n.status))r.setAttribute('opacity','.4');
+    if(n.status==='DEFERRED')r.setAttribute('opacity','.55'),r.setAttribute('stroke','#2563eb'),r.setAttribute('stroke-dasharray','5 3');
     if(n.status==='COMPLETED')r.setAttribute('stroke','#16a34a');
     if(selected===n.id)r.setAttribute('stroke-width','3');
     r.onclick=()=>selectNode(n.id);
     const t=document.createElementNS(NS,'text');
     t.setAttribute('x',x+8);t.setAttribute('y',y+16);
-    const mark=n.status==='COMPLETED'?'✓ ':n.status==='SUPERSEDED'?'⤳ ':n.status==='PROPOSED'?'? ':'';
+    const mark=n.status==='COMPLETED'?'✓ ':n.status==='SUPERSEDED'?'⤳ ':n.status==='DEFERRED'?'⏸ ':n.status==='PROPOSED'?'? ':'';
     t.textContent=(mark+n.label).slice(0,26);
     const t2=document.createElementNS(NS,'text');
     t2.setAttribute('x',x+8);t2.setAttribute('y',y+30);t2.setAttribute('fill','#64748b');t2.setAttribute('font-size','10');
@@ -267,6 +289,21 @@ async function showRationale(id){
 }
 
 /* ---------------- guardrails ---------------- */
+/* ---------------- capabilities ---------------- */
+async function importSkill(ev){
+  ev.preventDefault();
+  await post('/skills/import',{path:$('#sk-path').value}).catch(alert);
+  refresh(); return false;
+}
+async function importMcp(ev){
+  ev.preventDefault();
+  let cmd; try{cmd=JSON.parse($('#mcp-cmd').value)}catch(e){alert('command must be a JSON array');return false}
+  await post('/mcp/import',{server_id:$('#mcp-id').value,command:cmd}).catch(alert);
+  refresh(); return false;
+}
+async function setSkill(name,enabled){await post('/skills/'+name,{enabled}).catch(alert);refresh()}
+async function approveMcp(id){await post('/mcp/'+id+'/approve').catch(alert);refresh()}
+
 async function createGuardrail(ev){
   ev.preventDefault();
   let rule; try{rule=JSON.parse($('#gr-rule').value)}catch(e){alert('rule must be valid JSON');return false}
@@ -313,6 +350,21 @@ async function refresh(){
           <td>${a.decision_quality!=null?`<b>${a.decision_quality}</b> / ${a.outcome_quality}`:'—'}</td>
           <td><button onclick="showRationale('${r.decision_id}')">Why?</button></td></tr>`;
       }).join('');
+
+    const caps=await api('/capabilities');
+    $('#skilltable').innerHTML='<tr><th>name</th><th>description</th><th>risk</th><th>status</th><th></th></tr>'+
+      (caps.skills.map(s=>`<tr><td class="mono">${s.name}</td><td>${s.description}</td>
+        <td>${s.risk_class}</td><td><span class="pill ${s.enabled?'ACTIVE':(s.status||'DISABLED')}">${s.enabled?'ACTIVE':(s.status||'DISABLED')}</span></td>
+        <td><button onclick="setSkill('${s.name}',${!s.enabled})">${s.enabled?'Disable':'Enable'}</button></td></tr>`).join('')||'<tr><td class="muted" colspan="5">no skills imported</td></tr>');
+    $('#mcptable').innerHTML='<tr><th>server</th><th>tools</th><th>status</th><th></th></tr>'+
+      (caps.mcp_servers.map(s=>`<tr><td class="mono">${s.server_id}</td>
+        <td>${s.tools.map(t=>t.name).join(', ')}</td>
+        <td><span class="pill ${s.enabled?'ACTIVE':'PENDING_HUMAN'}">${s.enabled?'ACTIVE':'PENDING_HUMAN'}</span></td>
+        <td>${s.enabled?'':`<button class="ok" onclick="approveMcp('${s.server_id}')">Approve</button>`}</td></tr>`).join('')||'<tr><td class="muted" colspan="4">no MCP servers imported</td></tr>');
+    $('#tooltable').innerHTML='<tr><th>tool</th><th>risk class</th><th>origin</th><th>description</th><th>status</th></tr>'+
+      caps.tools.map(t=>`<tr><td class="mono">${t.name}</td><td>${t.risk_class}</td><td class="muted">${t.provenance}</td>
+        <td class="muted">${t.description}${t.description_trust==='untrusted'?' <span class="pill DENIED">untrusted text</span>':''}</td>
+        <td><span class="pill ${t.enabled?'ACTIVE':'DISABLED'}">${t.enabled?'ACTIVE':'DISABLED'}</span></td></tr>`).join('');
 
     const pols=await api('/policies');
     $('#policies').innerHTML='<tr><th>id</th><th>description</th><th>status</th><th>evidence</th><th>agreements</th><th>origin</th></tr>'+

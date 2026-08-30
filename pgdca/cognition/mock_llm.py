@@ -83,9 +83,14 @@ class MockLlmAdapter:
                     "risk_class": RiskClass.FINANCIAL.value,
                     "derived_from": [c["id"]],
                 })
+        assumptions = []
+        skills = ctx.get("skills", [])
+        if skills:  # skills are data informing the proposal, never commands
+            assumptions.append("applied skills: "
+                               + ", ".join(s["name"] for s in skills))
         return {"schema": SCHEMA_VERSION, "role": "hypotheses",
                 "summary": f"{len(hyps)} candidate actions",
-                "hypotheses": hyps, "assumptions": [], "risks": [],
+                "hypotheses": hyps, "assumptions": assumptions, "risks": [],
                 "missing_information": [f["id"] for f in factors
                                         if f.get("unit_cost") is None],
                 "confidence": 0.8}

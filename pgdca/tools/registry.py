@@ -28,6 +28,8 @@ class ToolSpec:
     risk_class: str
     description: str = ""
     provenance: str = "builtin"
+    enabled: bool = True
+    description_trust: str = "trusted"   # imported descriptions are "untrusted" data
 
 
 class ToolRegistry:
@@ -43,13 +45,24 @@ class ToolRegistry:
     def spec(self, name: str) -> ToolSpec:
         return self._tools[name][0]
 
-    def names(self) -> list[str]:
-        return sorted(self._tools)
+    def specs(self) -> list[ToolSpec]:
+        return [self._tools[n][0] for n in sorted(self._tools)]
+
+    def names(self, enabled_only: bool = True) -> list[str]:
+        return sorted(n for n, (s, _) in self._tools.items()
+                      if s.enabled or not enabled_only)
+
+    def set_enabled(self, name: str, enabled: bool) -> None:
+        if name in self._tools:
+            self._tools[name][0].enabled = enabled
 
     def execute(self, name: str, params: dict) -> ToolResult:
         if name not in self._tools:
             return ToolResult(status="failed", error=f"unknown tool '{name}'")
-        _, fn = self._tools[name]
+        spec, fn = self._tools[name]
+        if not spec.enabled:
+            return ToolResult(status="failed",
+                              error=f"tool '{name}' is disabled pending human approval")
         try:
             return fn(params)
         except Exception as exc:  # noqa: BLE001 - failures are data, not crashes

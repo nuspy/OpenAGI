@@ -15,15 +15,16 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-**Phase 0 (Minimum Viable Loop) implemented and green** — see [`docs/PHASE0.md`](docs/PHASE0.md) for the spec-traceability matrix and acceptance criteria. Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
+**Phase 1 implemented and green** (51 tests): persistent operation with recovery, imported skills and MCP servers under security gates (M28), Anthropic reference adapter behind the LLM port, dynamic reprioritization with target deferral — see [`docs/PHASE1.md`](docs/PHASE1.md). Phase 0 (Minimum Viable Loop) documented in [`docs/PHASE0.md`](docs/PHASE0.md) with the spec-traceability matrix. Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
 
 ## Phase 0 quickstart
 
 ```bash
-pip install -e ".[api,dev]"
-pytest                          # 35 tests incl. the acceptance scenario + deterministic replay
-python -m pgdca.scenario.toy    # scripted CLI demo
-python -m pgdca.api.server      # backend + web GUI at http://127.0.0.1:8000
+pip install -e ".[api,dev]"            # + ".[anthropic]" for the reference adapter
+pytest                                 # 51 tests incl. acceptance scenarios + deterministic replay
+python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
+python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
+python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at http://127.0.0.1:8000
 ```
 
 The event store is the single source of truth; the LLM proposes and the controller governs; the Decision Supervisor rules on every significant decision; Tier 1 guardrails are technically non-writable by the system identity; PAUSE/STOP are honored unconditionally; external content is data, never instructions.
@@ -34,9 +35,11 @@ pgdca/
   domain.py graph.py            typed weighted causal graph (Appendix A schema)
   arbitration.py                canonical U(a), opportunity cost, sensitivity gate
   security/                     two-tier guardrails, decision supervisor, budgets, taint
-  cognition/                    LLM gateway port + mock/replay adapters
+  cognition/                    LLM gateway port + mock/replay/anthropic adapters
   memory/                       journal, audit (dq≠oq), policies (SHADOW), calibration
-  controller.py                 deterministic controller + cognitive cycle
-  tools/ scenario/              tool registry + toy acceptance scenario
+  controller.py                 deterministic controller + cognitive cycle + recovery
+  tools/                        registry, skill packages, MCP client, capability store
+  scenario/                     toy acceptance scenario + opportunity reprioritization
   api/ ui/                      FastAPI backend + single-file web GUI
+examples/                       sample skill package + sample MCP server
 ```
