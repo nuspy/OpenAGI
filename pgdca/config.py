@@ -76,7 +76,14 @@ class Config:
                      "on_disagreement": "human"},
         "retrospective": {"enabled": False, "max_rounds": 1,
                           "on_disagreement": "primary_decides"},
+        "integration": {"enabled": False, "max_rounds": 1,
+                        "on_disagreement": "human"},
     })
+
+    # --- exogenous inputs (M31) + AI-initiated consultations (M32) ---
+    exogenous_require_consensus: bool = True   # integration waits for the human thread
+    exogenous_auto_weave_below: float = 0.0    # below this weight, edges self-apply as HYPOTHESIZED
+    consultation_interval_cycles: int = 0      # 0 = off; else a periodic sync thread opens
 
     # --- capability-acquisition sandbox (M10) ---
     sandbox_cpu_seconds: int = 10

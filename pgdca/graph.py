@@ -50,7 +50,13 @@ class GraphProjection:
             n = self.nodes.get(p["node_id"])
             if n is not None:
                 n["status"] = NodeStatus.DEFERRED.value
+                if p.get("blocked_by"):    # exogenous blocker: reversible
+                    n["props"]["deferred_by"] = p["blocked_by"]
                 self.dirty.add(n["id"])
+        elif t in (Ev.DIRECTIVE_ISSUED.value, Ev.FACT_RECORDED.value):
+            n = p["node"]
+            self.nodes[n["id"]] = n
+            self.dirty.add(n["id"])
         elif t == Ev.EDGE_ADDED.value:
             e = p["edge"]
             e.setdefault("_cycle", ev.cycle or 0)   # for hygiene TTL

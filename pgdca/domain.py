@@ -26,10 +26,17 @@ class NodeKind(str, Enum):
     ASSUMPTION = "ASSUMPTION"
     OPPORTUNITY = "OPPORTUNITY"
     EVIDENCE = "EVIDENCE"
+    # exogenous inputs (M31): issued from outside the loop while it runs
+    DIRECTIVE = "DIRECTIVE"   # normative human decision (target/constraint/context)
+    FACT = "FACT"             # descriptive scenario change (imposed or opportunity)
 
 
-GOAL_KINDS = {NodeKind.META_GOAL, NodeKind.PERSISTENT_GOAL, NodeKind.OBJECTIVE}
+# an ACTIVE directive is a propagation anchor: goal_effects, U(a),
+# antagonisms and critique weigh it automatically via props.priority
+GOAL_KINDS = {NodeKind.META_GOAL, NodeKind.PERSISTENT_GOAL, NodeKind.OBJECTIVE,
+              NodeKind.DIRECTIVE}
 RATIFICATION_KINDS = {NodeKind.META_GOAL, NodeKind.PERSISTENT_GOAL}
+EXOGENOUS_KINDS = {NodeKind.DIRECTIVE, NodeKind.FACT}
 
 
 class RelType(str, Enum):

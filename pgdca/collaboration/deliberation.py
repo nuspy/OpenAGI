@@ -19,7 +19,7 @@ from ..config import Config
 from ..events import Actor, Ev, Event
 
 SUBJECT_KINDS = ("decision", "node", "strategy", "guardrail",
-                 "contradiction", "escalation")
+                 "contradiction", "escalation", "scenario")
 
 
 class DeliberationProjection:
@@ -71,7 +71,7 @@ class DeliberationEngine:
 
     def __init__(self, runtime, projection: DeliberationProjection, gateway,
                  journal, graph, strategies, guardrails, evidence_store,
-                 config: Config | None = None):
+                 config: Config | None = None, budgets=None):
         self.runtime = runtime
         self.projection = projection
         self.gateway = gateway
@@ -80,6 +80,7 @@ class DeliberationEngine:
         self.strategies = strategies
         self.guardrails = guardrails
         self.evidence_store = evidence_store
+        self.budgets = budgets
         self.config = config or Config()
 
     # ------------------------------------------------------------- open
@@ -222,4 +223,26 @@ class DeliberationEngine:
                 return dict(first.get("packet") or {},
                             reason=first.get("text", ""))
             raise KeyError(subject_id)
+        if kind == "scenario":
+            # the whole picture: goals, targets, budget, exogenous inputs -
+            # the human discusses the overall course and closes with a
+            # change-set (M32)
+            from ..domain import NodeKind, NodeStatus
+            deferred = self.graph.by_kind(NodeKind.TARGET, NodeKind.SUB_TARGET,
+                                          status=NodeStatus.DEFERRED)
+            money = ({"limit": self.budgets.limit("money"),
+                      "remaining": self.budgets.remaining("money")}
+                     if self.budgets else {})
+            brief = lambda ns: [{"id": x["id"], "label": x["label"]}  # noqa: E731
+                                for x in sorted(ns, key=lambda y: y["id"])]
+            return {
+                "goals": brief(self.graph.active_goals()),
+                "open_targets": brief(self.graph.open_targets()),
+                "deferred_targets": brief(deferred),
+                "budget": money,
+                "directives": brief(self.graph.by_kind(NodeKind.DIRECTIVE,
+                                                       status=NodeStatus.ACTIVE)),
+                "facts": brief(self.graph.by_kind(NodeKind.FACT,
+                                                  status=NodeStatus.ACTIVE)),
+            }
         raise KeyError(kind)

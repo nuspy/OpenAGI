@@ -36,6 +36,8 @@ class MockLlmAdapter:
             return self._defend(ctx)
         if role == "decide":
             return self._decide(ctx)
+        if role == "integrate":
+            return self._integrate(ctx)
         return {"schema": SCHEMA_VERSION, "role": role or "unknown",
                 "summary": "no-op", "hypotheses": []}
 
@@ -243,12 +245,101 @@ class MockLlmAdapter:
             lines.append(f"Guardrail {ev.get('id')} (tier {ev.get('tier')}, "
                          f"{ev.get('flexibility')}): {ev.get('description')}; "
                          f"status {ev.get('status')}.")
+        elif kind == "scenario":
+            lines.append(f"Scenario: {len(ev.get('goals', []))} active "
+                         f"goal(s), {len(ev.get('open_targets', []))} open / "
+                         f"{len(ev.get('deferred_targets', []))} deferred "
+                         f"target(s); budget "
+                         f"{(ev.get('budget') or {}).get('remaining')} of "
+                         f"{(ev.get('budget') or {}).get('limit')} remaining; "
+                         f"{len(ev.get('directives', []))} directive(s), "
+                         f"{len(ev.get('facts', []))} fact(s) active.")
+            m = re.search(r"budget\s+(?:to|a)\s+([\d.]+)", q)
+            if m:
+                suggestions.append({
+                    "action_name": "suggest_edit",
+                    "params": {"ops": [{"op": "set_budget", "name": "money",
+                                        "limit": float(m.group(1))}]},
+                    "rationale": "apply by resolving as 'modified' with this "
+                                 "change-set (budget moves are human-only)",
+                    "risk_class": "READ_ONLY"})
+                lines.append(f"You propose moving the money budget to "
+                             f"{m.group(1)}: recorded as a change-set "
+                             f"suggestion.")
         if not lines:
             lines.append("No structured evidence is available for this subject.")
         return {"schema": SCHEMA_VERSION, "role": "deliberate",
                 "summary": " ".join(lines), "hypotheses": suggestions,
                 "assumptions": [], "risks": [], "missing_information": [],
                 "confidence": 0.85}
+
+    _STOP = {"the", "a", "an", "of", "to", "and", "for", "with", "in", "on",
+             "two", "weeks", "week", "my", "me", "di", "la", "il", "le", "per"}
+
+    def _integrate(self, ctx: dict) -> dict:
+        """Weave an exogenous node against the existing graph: lexical,
+        deterministic. 'avoid/no/without X' proposes BLOCK edges (+
+        deferral) toward matching targets; token overlap with a goal
+        proposes a SUPPORT edge; target-type directives spawn a plan
+        subtarget; budget words yield a budget note."""
+        n = ctx.get("node", {})
+        g = ctx.get("graph", {})
+        props = n.get("props", {})
+        text = f"{n.get('label', '')} {props.get('description', '')}".lower()
+        tokens = set(re.findall(r"[a-z0-9]+", text)) - self._STOP
+        weight = float(props.get("priority", props.get("importance", 0.5)))
+        hyps: list[dict] = []
+        risks: list[dict] = []
+        missing: list[str] = []
+
+        avoid = {m.group(1) for m in re.finditer(
+            r"(?:avoid|no|without|evita|niente|senza)\s+([a-z0-9]+)", text)}
+        for t in g.get("targets", []):
+            ttok = (set(re.findall(r"[a-z0-9]+", t["label"].lower()))
+                    | {t["id"].lower()})
+            if avoid & ttok:
+                hyps.append({"action_name": "propose_edge",
+                             "params": {"src": n.get("id"), "dst": t["id"],
+                                        "type": "BLOCK", "importance": weight,
+                                        "confidence": 0.8},
+                             "rationale": f"'{n.get('label')}' asks to avoid "
+                                          f"'{t['label']}'"})
+                hyps.append({"action_name": "propose_deferral",
+                             "params": {"target_id": t["id"]},
+                             "rationale": f"deferred while "
+                                          f"'{n.get('label')}' is active"})
+                risks.append({"type": "conflict",
+                              "reason": f"blocks active target {t['id']} "
+                                        f"('{t['label']}')"})
+        for gl in g.get("goals", []):
+            gtok = set(re.findall(r"[a-z0-9]+", gl["label"].lower())) - self._STOP
+            if tokens & gtok:
+                hyps.append({"action_name": "propose_edge",
+                             "params": {"src": n.get("id"), "dst": gl["id"],
+                                        "type": "SUPPORT",
+                                        "importance": weight,
+                                        "confidence": 0.7},
+                             "rationale": f"'{n.get('label')}' relates to "
+                                          f"goal '{gl['label']}'"})
+        if (n.get("kind") == "DIRECTIVE"
+                and (props.get("directive_type") == "target"
+                     or tokens & {"plan", "piano"})):
+            hyps.append({"action_name": "propose_target",
+                         "params": {"label": f"Plan: {n.get('label')}",
+                                    "priority": weight},
+                         "rationale": "a directive of target type needs an "
+                                      "actionable subtarget"})
+        if tokens & {"budget", "money", "cost", "funds", "soldi"}:
+            hyps.append({"action_name": "budget_note",
+                         "params": {"note": "budget impact declared: reduce "
+                                            "or reallocate other targets' "
+                                            "spending room (human-only op)"},
+                         "rationale": "the ratchet keeps budget moves human"})
+            missing.append("amount to allocate")
+        return {"schema": SCHEMA_VERSION, "role": "integrate",
+                "summary": f"{len(hyps)} weaving proposal(s)",
+                "hypotheses": hyps, "assumptions": [], "risks": risks,
+                "missing_information": missing, "confidence": 0.75}
 
     def _defend(self, ctx: dict) -> dict:
         """Primary's turn in a cross-AI review round: maintained points

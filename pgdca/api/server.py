@@ -279,6 +279,57 @@ def create_app(ctrl: Controller) -> FastAPI:
     def llm_usage():
         return ctrl.llm_usage.snapshot()
 
+    # -------------------------------------------- exogenous inputs (M31)
+    @app.get("/api/exogenous")
+    def exogenous():
+        return ctrl.exogenous.snapshot()
+
+    @app.post("/api/directives")
+    def issue_directive(body: dict = Body(...),
+                        x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.exogenous.issue_directive(
+            body["label"], body.get("description", ""),
+            float(body.get("weight", 0.6)), body.get("horizon", "short"),
+            body.get("directive_type", "context"), _actor(x_actor)))
+
+    @app.post("/api/facts")
+    def record_fact(body: dict = Body(...),
+                    x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.exogenous.record_fact(
+            body["label"], body.get("description", ""),
+            float(body.get("weight", 0.5)), body.get("mode", "imposed"),
+            _actor(x_actor)))
+
+    @app.post("/api/exogenous/{node_id}/update")
+    def update_exogenous(node_id: str, body: dict = Body(...),
+                         x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.exogenous.update(node_id, body.get("props", {}),
+                                            _actor(x_actor)))
+        return {"ok": True}
+
+    @app.post("/api/exogenous/{node_id}/retire")
+    def retire_exogenous(node_id: str, body: dict = Body(default={}),
+                         x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.exogenous.retire(
+            node_id, _actor(x_actor), body.get("note", "")))
+
+    @app.post("/api/exogenous/{node_id}/reintegrate")
+    def reintegrate_exogenous(node_id: str,
+                              x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.exogenous.reintegrate(node_id, _actor(x_actor)))
+        return {"ok": True}
+
+    @app.post("/api/exogenous/{node_id}/accept")
+    def accept_opportunity(node_id: str,
+                           x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.accept_opportunity(node_id, _actor(x_actor)))
+
+    @app.post("/api/exogenous/{node_id}/decline")
+    def decline_opportunity(node_id: str,
+                            x_actor: str | None = Header(default=None)):
+        return guard(lambda: ctrl.decline_opportunity(node_id,
+                                                      _actor(x_actor)))
+
     # -------------------------------------------- review / grounding
     @app.get("/api/reviews")
     def reviews():

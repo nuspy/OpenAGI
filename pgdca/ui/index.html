@@ -89,6 +89,7 @@
 <nav id="tabs">
   <button data-tab="graph" class="active">Graph</button>
   <button data-tab="inbox">Decision inbox <span id="pcount" class="count" hidden>0</span></button>
+  <button data-tab="world">World inputs <span id="wcount" class="count" hidden>0</span></button>
   <button data-tab="deliberation">Deliberation <span id="dcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails">Guardrails</button>
   <button data-tab="capabilities">Capabilities</button>
@@ -123,9 +124,41 @@
   </div>
 </main>
 
+<main id="tab-world">
+  <div class="grid2">
+    <div class="panel"><h3>Directives <span class="muted">(your decisions entering the running process — weighed among all decision points)</span></h3>
+      <table id="dirtable"></table>
+      <form class="gr" onsubmit="return issueDirective(event)" style="margin-top:10px">
+        <label>Label<input id="dir-label" required placeholder="e.g. Two weeks of vacation, avoid meetings"></label>
+        <label>Description<input id="dir-desc" placeholder="details for the integration analysis"></label>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1">Weight<input id="dir-weight" type="number" step="0.05" min="0" max="1" value="0.7"></label>
+          <label style="flex:1">Horizon <select id="dir-horizon"><option>short</option><option>long</option></select></label>
+          <label style="flex:1">Type <select id="dir-type"><option>context</option><option>target</option><option>constraint</option></select></label>
+        </div>
+        <button class="primary">Issue directive</button>
+      </form>
+    </div>
+    <div class="panel"><h3>Facts <span class="muted">(scenario changes — imposed, or opportunities to accept)</span></h3>
+      <table id="facttable"></table>
+      <form class="gr" onsubmit="return recordFact(event)" style="margin-top:10px">
+        <label>Label<input id="fact-label" required placeholder="e.g. Inheritance received"></label>
+        <label>Description<input id="fact-desc" placeholder="details for the integration analysis"></label>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1">Weight<input id="fact-weight" type="number" step="0.05" min="0" max="1" value="0.5"></label>
+          <label style="flex:1">Mode <select id="fact-mode"><option>imposed</option><option>opportunity</option></select></label>
+        </div>
+        <button class="primary">Record fact</button>
+      </form>
+    </div>
+  </div>
+  <p class="muted" style="font-size:12px;margin:10px 4px">Every input opens an integration thread (Deliberation tab): the system proposes relations, subtargets and deferrals; nothing weaves without your consensus. Edits re-evaluate the relations; retiring cascades (edges invalidated, blocked targets reactivate, spawned nodes go to an orphan review).</p>
+</main>
+
 <main id="tab-deliberation">
   <div class="grid2">
-    <div class="panel"><h3>Discussion threads <span class="muted">(the system opens threads on escalations; you can open one from any node, decision, strategy or contradiction)</span></h3>
+    <div class="panel"><h3>Discussion threads <span class="muted">(the system opens threads on escalations, integrations and consultations)</span>
+      <button style="float:right" onclick="openThread('scenario','overall')">Discuss the overall scenario</button></h3>
       <table id="threadlist"></table></div>
     <div class="panel" id="threadview"><p class="muted">Select a thread.</p></div>
   </div>
@@ -191,7 +224,19 @@
   <div class="panel" style="margin-top:12px"><h3>LLM usage per cognitive function <span class="muted">(inference is a budgeted resource)</span></h3><table id="llmusage"></table></div>
 </main>
 <main id="tab-config">
-  <div class="panel"><h3>Runtime configuration <span class="muted">(human-editable only; every change is an auditable CONFIG_UPDATED event, reapplied on recovery)</span></h3>
+  <div class="grid2">
+    <div class="panel"><h3>Cross-AI review <span class="muted">(M29 — per-checkpoint matrix)</span></h3>
+      <table id="revmatrix"></table>
+      <p><button class="primary" onclick="saveReviewMatrix()">Save review matrix</button></p>
+    </div>
+    <div class="panel"><h3>Grounding <span class="muted">(M30 — anti-hallucination check inside guardrails)</span></h3>
+      <div id="groundset" class="muted">…</div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:12px"><h3>Exogenous inputs &amp; consultations <span class="muted">(M31/M32)</span></h3>
+    <div id="exoset" class="muted">…</div>
+  </div>
+  <div class="panel" style="margin-top:12px"><h3>Runtime configuration <span class="muted">(raw; human-editable only; every change is an auditable CONFIG_UPDATED event, reapplied on recovery)</span></h3>
     <table id="configtable"></table>
     <p><button class="primary" onclick="saveConfig()">Save changed values</button>
        <span class="muted" style="font-size:12px">Only fields you modified are sent.</span></p>
@@ -219,7 +264,7 @@ let selected=null, selectedThread=null, lastSeq=0;
 function showTab(name){
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('main').forEach(m=>m.classList.toggle('active',m.id==='tab-'+name));
-  if(name==='config')api('/config').then(renderConfig).catch(()=>{});
+  if(name==='config'){api('/config').then(renderConfig).catch(()=>{});renderFeatureSettings().catch(()=>{});}
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 
@@ -232,9 +277,9 @@ async function injectAdvert(){
 }
 
 /* ---------------- graph ---------------- */
-const KINDCOL={META_GOAL:0,PERSISTENT_GOAL:0,OBJECTIVE:1,TARGET:2,SUB_TARGET:2,FACTOR:3,RESOURCE:3,TOOL:4,POLICY:4};
-const KINDFILL={META_GOAL:'#eef2ff',PERSISTENT_GOAL:'#eef2ff',OBJECTIVE:'#e0e7ff',TARGET:'#ecfdf5',SUB_TARGET:'#ecfdf5',FACTOR:'#fff7ed',RESOURCE:'#f1f5f9'};
-const KINDSTROKE={META_GOAL:'#6366f1',PERSISTENT_GOAL:'#6366f1',OBJECTIVE:'#818cf8',TARGET:'#10b981',SUB_TARGET:'#10b981',FACTOR:'#f59e0b',RESOURCE:'#94a3b8'};
+const KINDCOL={META_GOAL:0,PERSISTENT_GOAL:0,DIRECTIVE:0,OBJECTIVE:1,TARGET:2,SUB_TARGET:2,FACTOR:3,RESOURCE:3,TOOL:4,POLICY:4,FACT:4};
+const KINDFILL={META_GOAL:'#eef2ff',PERSISTENT_GOAL:'#eef2ff',OBJECTIVE:'#e0e7ff',TARGET:'#ecfdf5',SUB_TARGET:'#ecfdf5',FACTOR:'#fff7ed',RESOURCE:'#f1f5f9',DIRECTIVE:'#f5f3ff',FACT:'#f0f9ff'};
+const KINDSTROKE={META_GOAL:'#6366f1',PERSISTENT_GOAL:'#6366f1',OBJECTIVE:'#818cf8',TARGET:'#10b981',SUB_TARGET:'#10b981',FACTOR:'#f59e0b',RESOURCE:'#94a3b8',DIRECTIVE:'#7c3aed',FACT:'#0284c7'};
 const RELCOLOR=t=>({SUPPORT:'#16a34a',ENABLE:'#16a34a',REQUIRED:'#2563eb',ANTAGONIZE:'#dc2626',BLOCK:'#dc2626',INHIBIT:'#dc2626',RISK:'#dc2626',SUBSTITUTES:'#d97706'}[t]||'#94a3b8');
 
 function drawGraph(g){
@@ -481,6 +526,45 @@ async function createGuardrail(ev){
 }
 async function approveGuardrail(id){await post('/guardrails/'+id+'/approve').catch(alert);refresh()}
 
+/* ---------------- world inputs ---------------- */
+async function issueDirective(ev){
+  ev.preventDefault();
+  await post('/directives',{label:$('#dir-label').value,description:$('#dir-desc').value,
+    weight:+$('#dir-weight').value,horizon:$('#dir-horizon').value,
+    directive_type:$('#dir-type').value}).catch(alert);
+  $('#dir-label').value='';$('#dir-desc').value='';refresh();return false;
+}
+async function recordFact(ev){
+  ev.preventDefault();
+  await post('/facts',{label:$('#fact-label').value,description:$('#fact-desc').value,
+    weight:+$('#fact-weight').value,mode:$('#fact-mode').value}).catch(alert);
+  $('#fact-label').value='';$('#fact-desc').value='';refresh();return false;
+}
+async function exoAction(id,action){
+  if(action==='retire'&&!confirm('Retire '+id+'? Edges invalidate, blocked targets reactivate, spawned nodes go to orphan review.'))return;
+  await post('/exogenous/'+id+'/'+action).catch(alert);refresh();
+}
+async function exoWeight(id,field,current){
+  const v=prompt('New weight (0..1) for '+id,current); if(v===null)return;
+  const props={}; props[field]=+v;
+  await post('/exogenous/'+id+'/update',{props}).catch(alert);refresh();
+}
+function exoRow(x,isDir){
+  const st=x.status==='PROPOSED'?'PENDING_HUMAN':x.status;
+  const meta=isDir?`${x.type||''} · ${x.horizon||''}`:`${x.mode||''}`;
+  const opp=!isDir&&x.mode==='opportunity'&&x.status==='PROPOSED';
+  return `<tr><td class="mono">${x.id}</td><td>${esc(x.label)}</td>
+    <td>${x.weight}</td><td class="muted">${meta}</td>
+    <td><span class="pill ${st}">${x.status}</span></td>
+    <td class="muted" style="font-size:11px">${(x.origin&&x.origin.authority)||'owner'}</td>
+    <td>${x.status==='INVALIDATED'?'':`
+      ${opp?`<button class="ok" onclick="exoAction('${x.id}','accept')">Accept</button>
+             <button class="danger" onclick="exoAction('${x.id}','decline')">Decline</button>`:''}
+      <button onclick="exoWeight('${x.id}','${isDir?'priority':'importance'}',${x.weight})">Weight</button>
+      <button onclick="exoAction('${x.id}','reintegrate')">Re-integrate</button>
+      <button class="danger" onclick="exoAction('${x.id}','retire')">Retire</button>`}</td></tr>`;
+}
+
 /* ---------------- config ---------------- */
 let configOrig={};
 function renderConfig(cfg){
@@ -494,6 +578,56 @@ function renderConfig(cfg){
   }).join('');
   $('#configtable').innerHTML='<tr><th>field</th><th>value</th><th></th></tr>'+rows;
 }
+async function renderFeatureSettings(){
+  const cfg=await api('/config'); const grs=await api('/guardrails'); const kb=await api('/knowledge');
+  const cps=['decision','strategy','retrospective','integration'];
+  window._rm=cfg.review_matrix||{};
+  $('#revmatrix').innerHTML='<tr><th>checkpoint</th><th>enabled</th><th>max rounds</th><th>on disagreement</th><th>min risk</th></tr>'+
+    cps.map(c=>{const p=window._rm[c]||{};
+      return `<tr><td class="mono">${c}</td>
+        <td><input type="checkbox" class="rm" data-cp="${c}" data-k="enabled" ${p.enabled?'checked':''}></td>
+        <td><input type="number" class="rm" data-cp="${c}" data-k="max_rounds" value="${p.max_rounds??2}" min="1" style="width:58px;border:1px solid var(--line);border-radius:6px;padding:3px"></td>
+        <td><select class="rm" data-cp="${c}" data-k="on_disagreement">
+          <option ${p.on_disagreement==='human'?'selected':''}>human</option>
+          <option ${p.on_disagreement==='primary_decides'?'selected':''}>primary_decides</option></select></td>
+        <td>${c==='decision'?`<select class="rm" data-cp="${c}" data-k="min_risk_class">
+          ${['LOW_IMPACT_WRITE','EXTERNAL_COMMUNICATION','FINANCIAL','IDENTITY','IRREVERSIBLE'].map(r=>`<option ${p.min_risk_class===r?'selected':''}>${r}</option>`).join('')}</select>`:'<span class="muted">—</span>'}</td></tr>`}).join('');
+  const gcs=grs.filter(g=>g.rule&&g.rule.kind==='ground_check');
+  $('#groundset').innerHTML=(gcs.map(g=>`<div class="card">${g.description}
+      <span class="pill ${g.status}">${g.status}</span> <span class="muted">T${g.tier} · ${g.flexibility} · <span class="mono">${esc(JSON.stringify(g.rule))}</span></span><br>
+      <button onclick="toggleGuardrail('${g.id}','${g.status==='ACTIVE'?'RETIRED':'ACTIVE'}')">${g.status==='ACTIVE'?'Retire':'Activate'}</button></div>`).join('')
+    ||'<p class="muted">no ground-check guardrails yet</p>')+
+    `<p><button class="primary" onclick="createGroundCheck()">Create ground-check guardrail</button>
+     <span class="muted" style="font-size:12px">${kb.length} grounded doc(s) — manage knowledge in the Guardrails tab</span></p>`;
+  $('#exoset').innerHTML=`
+    <label><input type="checkbox" id="ex-consensus" ${cfg.exogenous_require_consensus?'checked':''}> require integration consensus (a thread before weaving)</label>
+    &nbsp;·&nbsp; auto-weave below weight <input id="ex-below" type="number" step="0.05" min="0" max="1" value="${cfg.exogenous_auto_weave_below}" style="width:68px;border:1px solid var(--line);border-radius:6px;padding:3px">
+    &nbsp;·&nbsp; periodic consultation every <input id="ex-cons" type="number" min="0" value="${cfg.consultation_interval_cycles}" style="width:58px;border:1px solid var(--line);border-radius:6px;padding:3px"> cycles (0 = off)
+    &nbsp; <button class="primary" onclick="saveExoSettings()">Save</button>`;
+}
+async function saveReviewMatrix(){
+  const m=JSON.parse(JSON.stringify(window._rm||{}));
+  document.querySelectorAll('.rm').forEach(el=>{
+    const cp=el.dataset.cp,k=el.dataset.k; m[cp]=m[cp]||{};
+    m[cp][k]=el.type==='checkbox'?el.checked:(el.type==='number'?+el.value:el.value);
+  });
+  await post('/config',{changes:{review_matrix:m}}).catch(alert);
+  renderFeatureSettings();
+}
+async function toggleGuardrail(id,status){await post('/guardrails/'+id,{changes:{status}}).catch(alert);renderFeatureSettings();}
+async function createGroundCheck(){
+  await post('/guardrails',{description:'claims must match grounded facts',tier:1,flexibility:'SOFT_BLOCK',
+    rule:{kind:'ground_check',attributes:['unit_cost'],tolerance:0.15,require_evidence:true},
+    conditions:{risk_class_at_least:'FINANCIAL'}}).catch(alert);
+  renderFeatureSettings();
+}
+async function saveExoSettings(){
+  await post('/config',{changes:{exogenous_require_consensus:$('#ex-consensus').checked,
+    exogenous_auto_weave_below:+$('#ex-below').value,
+    consultation_interval_cycles:+$('#ex-cons').value}}).catch(alert);
+  renderFeatureSettings();
+}
+
 async function saveConfig(){
   const changes={};
   document.querySelectorAll('#configtable .cfg').forEach(el=>{
@@ -616,6 +750,13 @@ async function refresh(){
     $('#dcount').hidden=!openThreads.length; $('#dcount').textContent=openThreads.length;
     renderThreadList(dels);
     renderThreadView(dels.find(t=>t.id===selectedThread)||null);
+
+    const exo=await api('/exogenous');
+    const ehdr='<tr><th>id</th><th>label</th><th>weight</th><th>meta</th><th>status</th><th>origin</th><th></th></tr>';
+    $('#dirtable').innerHTML=ehdr+(exo.directives.map(x=>exoRow(x,true)).join('')||'<tr><td class="muted" colspan="7">no directives yet</td></tr>');
+    $('#facttable').innerHTML=ehdr+(exo.facts.map(x=>exoRow(x,false)).join('')||'<tr><td class="muted" colspan="7">no facts yet</td></tr>');
+    const pendingExo=[...exo.directives,...exo.facts].filter(x=>x.status==='PROPOSED').length;
+    $('#wcount').hidden=!pendingExo; $('#wcount').textContent=pendingExo;
 
     (await api('/events?after='+lastSeq)).forEach(pushEvent);
   }catch(err){ $('#state').textContent='offline'; $('#state').className='badge STOPPED'; }

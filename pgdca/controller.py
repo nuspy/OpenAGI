@@ -18,9 +18,10 @@ from .cognition.reviewer import ReviewEngine, ReviewProjection
 from .collaboration.deliberation import (DeliberationEngine,
                                          DeliberationProjection)
 from .config import Config
-from .domain import (GOAL_KINDS, RATIFICATION_KINDS, NodeKind, NodeStatus,
-                     RelType, node)
+from .domain import (EXOGENOUS_KINDS, GOAL_KINDS, RATIFICATION_KINDS,
+                     NodeKind, NodeStatus, RelType, node)
 from .events import Actor, Ev
+from .exogenous import ExogenousManager
 from .graph import GraphProjection
 from .memory.audit import AuditEngine
 from .memory.calibration import CalibrationProjection
@@ -103,12 +104,15 @@ class Controller:
         self.deliberation = DeliberationEngine(
             runtime, self.deliberations, self.gateway, self.journal,
             self.graph, self.strategies, self.guardrails, self.evidence_store,
-            self.config)
+            self.config, budgets=self.budgets)
         self.review_gateway = LlmGateway(
             runtime, reviewer_adapter or MockReviewerAdapter(), self.config)
         self.reviews = runtime.register(ReviewProjection())
         self.reviewer = ReviewEngine(runtime, self.reviews, self.gateway,
                                      self.review_gateway, self.config)
+        self.exogenous = ExogenousManager(runtime, self.graph, self.gateway,
+                                          self.deliberation, self.reviewer,
+                                          self.budgets, self.config)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -162,7 +166,8 @@ class Controller:
         import re as _re
         counters: dict[str, int] = {}
         id_re = _re.compile(
-            r'"((?:dec|ver|pol|polseed|gr2|goal|str|del|rvw|kb)_)(\d+)"')
+            r'"((?:dec|ver|pol|polseed|gr2|goal|str|del|rvw|kb|dirv|fact'
+            r'|ie|tgt)_)(\d+)"')
         last_cycle = 0
         last_control: str | None = None
         for ev in events:
@@ -420,12 +425,29 @@ class Controller:
         subject = th["subject"]
         effects: list[dict] = []
         if outcome == "modified" and changes:
-            node_id = changes.get("node_id")
-            props = changes.get("props") or {}
-            if node_id and props:
-                self.human_edit_node(node_id, props, actor)
-                effects.append({"type": "node_edited", "node_id": node_id,
-                                "props": props})
+            if isinstance(changes, list):          # typed change-set (M32)
+                effects += self._apply_ops(changes, actor)
+            elif isinstance(changes, dict):
+                if isinstance(changes.get("ops"), list):
+                    effects += self._apply_ops(changes["ops"], actor)
+                node_id = changes.get("node_id")
+                props = changes.get("props") or {}
+                if node_id and props:
+                    self.human_edit_node(node_id, props, actor)
+                    effects.append({"type": "node_edited", "node_id": node_id,
+                                    "props": props})
+        # integration threads (M31): confirming/modifying weaves the
+        # exogenous node per the (possibly edited) proposal
+        packet = (th["messages"][0].get("packet") or {}) if th["messages"] else {}
+        if (packet.get("checkpoint") == "integration"
+                and outcome in ("confirmed", "modified")):
+            proposal = packet.get("proposal") or {}
+            if isinstance(changes, dict) and isinstance(changes.get("proposal"),
+                                                        dict):
+                proposal = changes["proposal"]
+            applied = self.exogenous.apply_integration(
+                packet["node_id"], proposal, actor)
+            effects.append({"type": "integration_applied", **applied})
         if outcome == "cancelled" and subject["kind"] == "decision":
             rec = self.journal.records.get(subject["id"])
             if (self._pending is not None
@@ -563,6 +585,22 @@ class Controller:
             if key not in self._conflicts_emitted:
                 self._conflicts_emitted.add(key)
                 self.runtime.emit(Ev.CONFLICT_DETECTED, c, Actor.SYSTEM)
+                # a conflict touching a human directive earns a
+                # consultation thread (M32): the AI asks before trading
+                # off what the human explicitly decided
+                touched = [g for g in (list(c.get("supports", []))
+                                       + list(c.get("harms", [])))
+                           if (self.graph.node(g) or {}).get("kind")
+                           == NodeKind.DIRECTIVE.value]
+                if touched:
+                    self.deliberation.open_system(
+                        f"conflict involves your directive(s) "
+                        f"{', '.join(sorted(set(touched)))}: factor "
+                        f"'{c.get('factor')}' supports "
+                        f"{c.get('supports')} but harms {c.get('harms')}. "
+                        f"How should I weigh this?",
+                        {"checkpoint": "consultation", "conflict": c,
+                         "cycle": self.cycle})
 
         self._check_control()
 
@@ -725,6 +763,110 @@ class Controller:
                       actor: Actor = Actor.HUMAN) -> str:
         return _add_knowledge(self.runtime, text, meta, actor)
 
+    # ------------------------------------------------- exogenous (M31)
+    def _integration_thread(self, node_id: str) -> dict | None:
+        for t in self.deliberations.open_threads():
+            p = (t["messages"][0].get("packet") or {}) if t["messages"] else {}
+            if (t["opened_by"] == "system"
+                    and p.get("checkpoint") == "integration"
+                    and p.get("node_id") == node_id):
+                return t
+        return None
+
+    def accept_opportunity(self, node_id: str,
+                           actor: Actor = Actor.HUMAN) -> dict:
+        """Accepting an opportunity fact = confirming its integration
+        thread (weaves it and activates the node)."""
+        th = self._integration_thread(node_id)
+        if th is not None:
+            return self.resolve_deliberation(th["id"], "confirmed",
+                                             "opportunity accepted",
+                                             actor=actor)
+        # no open thread (e.g. resolved earlier without applying): weave
+        # from the last recorded proposal
+        proposal = next((e.payload["proposal"] for e in
+                         reversed(self.runtime.events())
+                         if e.type == Ev.INTEGRATION_PROPOSED.value
+                         and e.payload.get("node_id") == node_id), None)
+        if proposal is None:
+            raise KeyError(node_id)
+        return self.exogenous.apply_integration(node_id, proposal, actor)
+
+    def decline_opportunity(self, node_id: str,
+                            actor: Actor = Actor.HUMAN) -> dict:
+        if actor != Actor.HUMAN:
+            raise PermissionError("opportunities are declined by the human")
+        n = self.graph.node(node_id)
+        if n is None or n["kind"] not in {k.value for k in EXOGENOUS_KINDS}:
+            raise KeyError(node_id)
+        th = self._integration_thread(node_id)
+        if th is not None:
+            self.deliberation.record_resolution(
+                th["id"], {"outcome": "cancelled",
+                           "note": "opportunity declined", "effects": []},
+                actor)
+        self.runtime.emit(Ev.NODE_INVALIDATED,
+                          {"node_id": node_id,
+                           "status": NodeStatus.INVALIDATED.value,
+                           "reason": "opportunity declined"}, actor)
+        return {"declined": node_id}
+
+    def _apply_ops(self, ops: list, actor: Actor) -> list[dict]:
+        """Typed change-set operations (M32): any deliberation thread can,
+        on the human's request, modify the overall scenario and targets -
+        each op routed through its existing human-identity channel."""
+        effects: list[dict] = []
+        for op in ops:
+            k = op.get("op")
+            if k == "node_props":
+                self.human_edit_node(op["node_id"], op.get("props", {}), actor)
+                effects.append({"type": "node_edited",
+                                "node_id": op["node_id"]})
+            elif k == "new_directive":
+                d = self.exogenous.issue_directive(
+                    op["label"], op.get("description", ""),
+                    float(op.get("weight", 0.6)), op.get("horizon", "short"),
+                    op.get("directive_type", "context"), actor)
+                effects.append({"type": "directive_issued", "id": d["id"]})
+            elif k == "new_fact":
+                f = self.exogenous.record_fact(
+                    op["label"], op.get("description", ""),
+                    float(op.get("weight", 0.5)), op.get("mode", "imposed"),
+                    actor)
+                effects.append({"type": "fact_recorded", "id": f["id"]})
+            elif k == "propose_goal":
+                kind = NodeKind(op.get("kind", "OBJECTIVE"))
+                gid = self.propose_goal(kind, op["label"],
+                                        float(op.get("priority", 0.5)), actor)
+                if op.get("ratify") and kind in RATIFICATION_KINDS:
+                    self.ratify_goal(gid, actor)
+                effects.append({"type": "goal_proposed", "id": gid})
+            elif k == "defer_target":
+                self.runtime.emit(Ev.TARGET_DEFERRED,
+                                  {"node_id": op["node_id"],
+                                   "reason": op.get("reason",
+                                                    "human change-set")},
+                                  actor)
+                effects.append({"type": "target_deferred",
+                                "node_id": op["node_id"]})
+            elif k == "set_budget":
+                self.set_budget(op["name"], float(op["limit"]), actor)
+                effects.append({"type": "budget_set", "name": op["name"],
+                                "limit": float(op["limit"])})
+            elif k == "create_guardrail":
+                g = guardrail(
+                    description=op["description"],
+                    tier=int(op.get("tier", 2)),
+                    rule=op.get("rule", {}),
+                    flexibility=Flexibility(op.get("flexibility",
+                                                   "SOFT_BLOCK")),
+                    conditions=op.get("conditions"))
+                self.guardrails.create(g, actor)
+                effects.append({"type": "guardrail_created", "id": g["id"]})
+            else:
+                raise ValueError(f"unknown change-set op '{k}'")
+        return effects
+
     # -------------------------------------------------------- helpers
     def _escalate(self, reason: str) -> CycleResult:
         """Escalations are bidirectional deliberation: the packet becomes
@@ -802,6 +944,19 @@ class Controller:
         goals = [{"id": g["id"], "label": g["label"],
                   "priority": g["props"].get("priority", 0.5)}
                  for g in sorted(self.graph.active_goals(), key=lambda x: x["id"])]
+        directives = [{"id": d["id"], "label": d["label"],
+                       "weight": d["props"].get("priority", 0.5),
+                       "type": d["props"].get("directive_type"),
+                       "horizon": d["props"].get("horizon")}
+                      for d in sorted(self.graph.by_kind(
+                          NodeKind.DIRECTIVE, status=NodeStatus.ACTIVE),
+                          key=lambda x: x["id"])]
+        facts = [{"id": f["id"], "label": f["label"],
+                  "weight": f["props"].get("importance", 0.5),
+                  "mode": f["props"].get("mode")}
+                 for f in sorted(self.graph.by_kind(
+                     NodeKind.FACT, status=NodeStatus.ACTIVE),
+                     key=lambda x: x["id"])]
         tools = self.registry.names()
         # progressive disclosure: only skills triggered by the current
         # context enter the briefing; their text stays labeled untrusted
@@ -814,6 +969,8 @@ class Controller:
                   if matches_context(s, context_text)]
         return {
             "goals": goals,
+            "directives": directives,
+            "facts": facts,
             "factors": factors,
             "budget": {"money": {"limit": self.budgets.limit("money"),
                                  "remaining": self.budgets.remaining("money")}},
@@ -914,6 +1071,65 @@ class Controller:
                                    "reason": "budget reallocated toward "
                                              "higher-value active pursuits"},
                                   Actor.SYSTEM)
+
+        # exogenous blocking (M31): a target with an active BLOCK/INHIBIT
+        # edge from an ACTIVE directive/fact is deferred - reversibly: it
+        # reactivates the moment the blocker is retired ("no meetings
+        # while the vacation directive stands")
+        exo = {k.value for k in EXOGENOUS_KINDS}
+        for t in self.graph.open_targets():
+            for e in self.graph.in_edges(t["id"], {RelType.BLOCK,
+                                                   RelType.INHIBIT}):
+                src = self.graph.node(e["src"])
+                if (src is not None and src["kind"] in exo
+                        and src["status"] == NodeStatus.ACTIVE.value):
+                    self.runtime.emit(Ev.TARGET_DEFERRED,
+                                      {"node_id": t["id"],
+                                       "blocked_by": src["id"],
+                                       "reason": f"blocked by "
+                                                 f"{src['kind'].lower()} "
+                                                 f"{src['id']} "
+                                                 f"('{src['label']}')"},
+                                      Actor.SYSTEM)
+                    break
+        for t in self.graph.by_kind(NodeKind.TARGET, NodeKind.SUB_TARGET,
+                                    status=NodeStatus.DEFERRED):
+            blocker_id = t["props"].get("deferred_by")
+            if not blocker_id:
+                continue   # budget deferrals are not blocker-bound
+            blocker = self.graph.node(blocker_id)
+            edge_alive = any(
+                e["src"] == blocker_id
+                for e in self.graph.in_edges(t["id"], {RelType.BLOCK,
+                                                       RelType.INHIBIT}))
+            if (blocker is None
+                    or blocker["status"] != NodeStatus.ACTIVE.value
+                    or not edge_alive):
+                self.runtime.emit(Ev.NODE_UPDATED,
+                                  {"node_id": t["id"],
+                                   "status": NodeStatus.ACTIVE.value,
+                                   "props": {"deferred_by": None},
+                                   "reason": "blocker retired"},
+                                  Actor.SYSTEM)
+
+        # periodic human consultation (M32, config-gated): the system asks
+        # for a sync on targets, limits and strategy
+        n_cons = self.config.consultation_interval_cycles
+        if (n_cons and self.cycle and self.cycle % n_cons == 0
+                and not any((t["messages"][0].get("packet") or {})
+                            .get("checkpoint") == "consultation"
+                            for t in self.deliberations.open_threads()
+                            if t["opened_by"] == "system")):
+            summary = self.deliberation._evidence("scenario", "overall")
+            self.deliberation.open_system(
+                f"periodic sync (cycle {self.cycle}): "
+                f"{len(summary['open_targets'])} open / "
+                f"{len(summary['deferred_targets'])} deferred target(s), "
+                f"budget remaining {summary['budget'].get('remaining')}. "
+                f"Reply to discuss targets, limits or strategy; resolve to "
+                f"acknowledge.",
+                {"checkpoint": "consultation", "cycle": self.cycle,
+                 "summary": summary})
 
         # macro-cycle maintenance: graph hygiene - stale, never-corroborated
         # HYPOTHESIZED edges are pruned (causal-propagation guardrails)

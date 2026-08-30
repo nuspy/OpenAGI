@@ -13,7 +13,7 @@ seed reproduces every number exactly.
 | target completion | 1.0 | 1.0 | 1.0 |
 | error recurrence | 1.0 | 0.5 | 1.0 |
 | intervention rate | 0.892 | 0.045 | 0.898 |
-| tokens / completed target | 18005.4 | 5862.8 | 32295.4 |
+| tokens / completed target | 18109.6 | 5886.6 | 32395.0 |
 | value / 100 spent | 0.57 | 0.57 | 0.57 |
 
 ## Reading the table

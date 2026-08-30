@@ -44,10 +44,10 @@
      "max": 0.892
     },
     "tokens_per_completed_target": {
-     "mean": 18005.4,
-     "stdev": 61.994,
-     "min": 17901.0,
-     "max": 18057.0
+     "mean": 18109.6,
+     "stdev": 62.204,
+     "min": 18005.0,
+     "max": 18162.0
     },
     "value_per_100_spent": {
      "mean": 0.57,
@@ -107,8 +107,8 @@
       }
      },
      "llm": {
-      "total_tokens": 126223,
-      "tokens_per_completed_target": 18032,
+      "total_tokens": 126950,
+      "tokens_per_completed_target": 18136,
       "calls": 236
      },
      "value": {
@@ -177,8 +177,8 @@
       }
      },
      "llm": {
-      "total_tokens": 126265,
-      "tokens_per_completed_target": 18038,
+      "total_tokens": 126992,
+      "tokens_per_completed_target": 18142,
       "calls": 236
      },
      "value": {
@@ -247,8 +247,8 @@
       }
      },
      "llm": {
-      "total_tokens": 126399,
-      "tokens_per_completed_target": 18057,
+      "total_tokens": 127135,
+      "tokens_per_completed_target": 18162,
       "calls": 236
      },
      "value": {
@@ -317,8 +317,8 @@
       }
      },
      "llm": {
-      "total_tokens": 125309,
-      "tokens_per_completed_target": 17901,
+      "total_tokens": 126036,
+      "tokens_per_completed_target": 18005,
       "calls": 235
      },
      "value": {
@@ -387,8 +387,8 @@
       }
      },
      "llm": {
-      "total_tokens": 125994,
-      "tokens_per_completed_target": 17999,
+      "total_tokens": 126721,
+      "tokens_per_completed_target": 18103,
       "calls": 236
      },
      "value": {
@@ -445,10 +445,10 @@
      "max": 0.045
     },
     "tokens_per_completed_target": {
-     "mean": 5862.8,
-     "stdev": 2.95,
-     "min": 5860.0,
-     "max": 5866.0
+     "mean": 5886.6,
+     "stdev": 3.13,
+     "min": 5884.0,
+     "max": 5890.0
     },
     "value_per_100_spent": {
      "mean": 0.57,
@@ -508,8 +508,8 @@
       }
      },
      "llm": {
-      "total_tokens": 41022,
-      "tokens_per_completed_target": 5860,
+      "total_tokens": 41188,
+      "tokens_per_completed_target": 5884,
       "calls": 53
      },
      "value": {
@@ -578,8 +578,8 @@
       }
      },
      "llm": {
-      "total_tokens": 41024,
-      "tokens_per_completed_target": 5861,
+      "total_tokens": 41190,
+      "tokens_per_completed_target": 5884,
       "calls": 53
      },
      "value": {
@@ -648,8 +648,8 @@
       }
      },
      "llm": {
-      "total_tokens": 41027,
-      "tokens_per_completed_target": 5861,
+      "total_tokens": 41195,
+      "tokens_per_completed_target": 5885,
       "calls": 53
      },
      "value": {
@@ -718,8 +718,8 @@
       }
      },
      "llm": {
-      "total_tokens": 41062,
-      "tokens_per_completed_target": 5866,
+      "total_tokens": 41228,
+      "tokens_per_completed_target": 5890,
       "calls": 53
      },
      "value": {
@@ -788,8 +788,8 @@
       }
      },
      "llm": {
-      "total_tokens": 41062,
-      "tokens_per_completed_target": 5866,
+      "total_tokens": 41228,
+      "tokens_per_completed_target": 5890,
       "calls": 53
      },
      "value": {
@@ -846,10 +846,10 @@
      "max": 0.898
     },
     "tokens_per_completed_target": {
-     "mean": 32295.4,
-     "stdev": 4.219,
-     "min": 32292.0,
-     "max": 32300.0
+     "mean": 32395.0,
+     "stdev": 3.674,
+     "min": 32392.0,
+     "max": 32399.0
     },
     "value_per_100_spent": {
      "mean": 0.57,
@@ -909,8 +909,8 @@
       }
      },
      "llm": {
-      "total_tokens": 226044,
-      "tokens_per_completed_target": 32292,
+      "total_tokens": 226742,
+      "tokens_per_completed_target": 32392,
       "calls": 243
      },
      "value": {
@@ -979,8 +979,8 @@
       }
      },
      "llm": {
-      "total_tokens": 226043,
-      "tokens_per_completed_target": 32292,
+      "total_tokens": 226741,
+      "tokens_per_completed_target": 32392,
       "calls": 243
      },
      "value": {
@@ -1049,8 +1049,8 @@
       }
      },
      "llm": {
-      "total_tokens": 226048,
-      "tokens_per_completed_target": 32293,
+      "total_tokens": 226748,
+      "tokens_per_completed_target": 32393,
       "calls": 243
      },
      "value": {
@@ -1119,8 +1119,8 @@
       }
      },
      "llm": {
-      "total_tokens": 226098,
-      "tokens_per_completed_target": 32300,
+      "total_tokens": 226796,
+      "tokens_per_completed_target": 32399,
       "calls": 243
      },
      "value": {
@@ -1189,8 +1189,8 @@
       }
      },
      "llm": {
-      "total_tokens": 226098,
-      "tokens_per_completed_target": 32300,
+      "total_tokens": 226796,
+      "tokens_per_completed_target": 32399,
       "calls": 243
      },
      "value": {
