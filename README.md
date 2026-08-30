@@ -29,6 +29,13 @@ python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at htt
 python -m pgdca.api.server --adapter llmswitch   # real local LLM via the llmswitch library (docs/LOCAL_INTEGRATIONS.md)
 ```
 
+Windows one-shot setup and launch:
+
+```powershell
+.\scripts\install.ps1        # venv + editable install (+ local llmswitch if present)
+.\scripts\run.ps1 -Adapter llmswitch   # server + web GUI (mock|anthropic|llmswitch)
+```
+
 The event store is the single source of truth; the LLM proposes and the controller governs; the Decision Supervisor rules on every significant decision; Tier 1 guardrails are technically non-writable by the system identity; PAUSE/STOP are honored unconditionally; external content is data, never instructions.
 
 ```
