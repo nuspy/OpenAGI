@@ -21,11 +21,12 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ```bash
 pip install -e ".[api,dev]"            # + ".[anthropic]" for the reference adapter
-pytest                                 # 134 tests incl. acceptance scenarios + deterministic replay
+pytest                                 # 150 tests incl. acceptance scenarios + deterministic replay
 python -m pgdca.bench --seeds 5 --days 6   # PGDCA-Bench: seeded metrics + ablations (M20)
 python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
 python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
 python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at http://127.0.0.1:8000
+python -m pgdca.api.server --adapter llmswitch   # real local LLM via the llmswitch library (docs/LOCAL_INTEGRATIONS.md)
 ```
 
 The event store is the single source of truth; the LLM proposes and the controller governs; the Decision Supervisor rules on every significant decision; Tier 1 guardrails are technically non-writable by the system identity; PAUSE/STOP are honored unconditionally; external content is data, never instructions.
