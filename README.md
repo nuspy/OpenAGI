@@ -15,13 +15,13 @@ PGDCA is a systems architecture in which a generative LLM operates as one compon
 
 ## Status
 
-**Phase 2 implemented and green** (63 tests): external-world connection points behind typed ports (voice/Call Happy Call, email, SMS, browser, vault, identity — mocks + conformance here, real adapters in local development per [`docs/LOCAL_INTEGRATIONS.md`](docs/LOCAL_INTEGRATIONS.md)) and strategy branching with the full PROPOSED→ACTIVE→DEFERRED/FAILED→SUCCESSFUL lifecycle — see [`docs/PHASE2.md`](docs/PHASE2.md). Earlier slices: [`docs/PHASE1.md`](docs/PHASE1.md) (recovery, skills/MCP import M28, reference adapter, dynamic reprioritization), [`docs/PHASE0.md`](docs/PHASE0.md) (Minimum Viable Loop + spec-traceability matrix). Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
+**Phase 3 implemented and green** (72 tests): the metacognitive loop — counterfactual regret with the dq≠oq "bad luck ≠ bad judgment" distinction, a self-model that shrinks LLM-claimed success probabilities toward observed rates, recurrence advisories on previously-failed decision signatures, contradiction management (external claims never silently overwritten; observation beats claim, everything else human-only), macro-cycle pruning of stale hypothesized edges, and compensation of revoked executed actions — see [`docs/PHASE3.md`](docs/PHASE3.md). Earlier slices: [`docs/PHASE2.md`](docs/PHASE2.md) (typed external ports — voice/Call Happy Call, email, SMS, browser, vault, identity — mocks + conformance here, real adapters in local development per [`docs/LOCAL_INTEGRATIONS.md`](docs/LOCAL_INTEGRATIONS.md); strategy branching with full lifecycle), [`docs/PHASE1.md`](docs/PHASE1.md) (recovery, skills/MCP import M28, reference adapter, dynamic reprioritization), [`docs/PHASE0.md`](docs/PHASE0.md) (Minimum Viable Loop + spec-traceability matrix). Documents at revision **v1.1** (2026-08-30): the review in `docs/ANALISI_E_PROPOSTE.md` approved M1–M17/M19–M20, rejected M21–M22, and added requirements M23–M28; the paper carries the revision as tracked changes (author "Claude Code") — rejecting all changes restores v1.0 exactly.
 
-## Phase 0 quickstart
+## Quickstart
 
 ```bash
 pip install -e ".[api,dev]"            # + ".[anthropic]" for the reference adapter
-pytest                                 # 51 tests incl. acceptance scenarios + deterministic replay
+pytest                                 # 72 tests incl. acceptance scenarios + deterministic replay
 python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
 python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
 python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at http://127.0.0.1:8000
@@ -36,7 +36,9 @@ pgdca/
   arbitration.py                canonical U(a), opportunity cost, sensitivity gate
   security/                     two-tier guardrails, decision supervisor, budgets, taint
   cognition/                    LLM gateway port + mock/replay/anthropic adapters
-  memory/                       journal, audit (dq≠oq), policies (SHADOW), calibration
+  memory/                       journal, audit (dq≠oq), policies (SHADOW), calibration,
+                                self-model (calibrated priors), evidence/contradictions,
+                                counterfactuals (regret, avoidability)
   planning.py                   strategy branching with lifecycle + adherence bonus
   controller.py                 deterministic controller + cognitive cycle + recovery
   ports/                        voice, email/SMS, browser, vault/identity (Protocol+mock+conformance)

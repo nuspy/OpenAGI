@@ -33,6 +33,14 @@ class Config:
     calibration_min_samples: int = 3
     calibration_poor_brier: float = 0.25  # mean Brier above this = poorly calibrated domain
 
+    # --- self-model: calibrated success priors (claims shrink toward observation) ---
+    calibration_pseudo_count: int = 3     # weight of the LLM's claimed probability
+    recurrence_failure_threshold: int = 2  # past failures before an advisory fires
+
+    # --- macro-cycle maintenance ---
+    macro_interval_cycles: int = 10       # full-sweep maintenance cadence
+    hypothesized_edge_ttl: int = 8        # cycles before an uncorroborated edge is pruned
+
     # --- causal propagation guardrails ---
     max_propagation_depth: int = 2
     hypothesized_edge_penalty: float = 0.6  # confidence multiplier for HYPOTHESIZED edges

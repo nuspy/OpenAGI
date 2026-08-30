@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PGDCA — Phase 0 Console</title>
+<title>PGDCA — Console</title>
 <style>
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --ink:#1e293b; --muted:#64748b;
@@ -63,7 +63,7 @@
 </head>
 <body>
 <header>
-  <h1>PGDCA <span class="muted">Phase 0</span></h1>
+  <h1>PGDCA <span class="muted">Console</span></h1>
   <span id="state" class="badge">…</span>
   <span class="muted">cycle <b id="cycle">0</b></span>
   <div class="budget">
@@ -85,7 +85,7 @@
   <button data-tab="guardrails">Guardrails</button>
   <button data-tab="capabilities">Capabilities</button>
   <button data-tab="journal">Journal</button>
-  <button data-tab="policies">Policies</button>
+  <button data-tab="policies">Learning</button>
   <button data-tab="events">Events</button>
 </nav>
 
@@ -141,6 +141,10 @@
 <main id="tab-policies">
   <div class="panel"><h3>Strategy branches</h3><table id="strategies"></table></div>
   <div class="panel" style="margin-top:12px"><h3>Policies</h3><table id="policies"></table></div>
+  <div class="grid2" style="margin-top:12px">
+    <div class="panel"><h3>Self-model <span class="muted">(claims calibrated by observation)</span></h3><table id="selfmodel"></table></div>
+    <div class="panel"><h3>Contradictions <span class="muted">(claims are never silently overwritten)</span></h3><table id="contradictions"></table></div>
+  </div>
 </main>
 <main id="tab-events"><div class="panel" id="events"></div></main>
 
@@ -286,6 +290,11 @@ function renderRationale(p){
     ${p.override?` → override: <span class="pill ${p.override.effective}">${p.override.effective}</span>`:''}</div>
     <div><b>Outcome:</b> ${p.what_happened.execution?p.what_happened.execution.status:'not executed'}
     ${p.audit?` · decision quality <b>${p.audit.decision_quality}</b> vs outcome quality <b>${p.audit.outcome_quality}</b>`:''}</div>
+    ${p.counterfactual?`<div class="muted"><b>Counterfactual (estimate):</b> best alternative was
+      ${p.counterfactual.best_alternative.action_name}(${p.counterfactual.best_alternative.factor_id??''})
+      U=${p.counterfactual.best_alternative.ex_ante_utility} · regret ${p.counterfactual.regret}
+      · ${p.counterfactual.avoidable?'<span style="color:var(--bad)">avoidable</span>':'not avoidable (bad luck, not bad judgment)'}</div>`:''}
+    ${p.compensation?`<div><b>Compensated:</b> ${JSON.stringify(p.compensation.result)}</div>`:''}
   </div>`;
 }
 async function showRationale(id){
@@ -378,6 +387,19 @@ async function refresh(){
         <td>${Math.min(b.step_index,b.steps.length)}/${b.steps.length}
             <span class="muted">${b.steps.map(s=>(s.action_name==='research_price'?'r:':'b:')+s.factor_id).join(' → ')}</span></td>
         <td>${b.score}</td></tr>`).join('')||'<tr><td class="muted" colspan="5">no strategies yet</td></tr>');
+
+    const sm=await api('/selfmodel');
+    $('#selfmodel').innerHTML='<tr><th>domain/action</th><th>attempts</th><th>observed rate</th></tr>'+
+      (Object.entries(sm.actions).map(([k,v])=>`<tr><td class="mono">${k}</td><td>${v.attempts}</td>
+        <td>${v.observed_rate??'—'}</td></tr>`).join('')||'<tr><td class="muted" colspan="3">no history yet</td></tr>')+
+      (Object.keys(sm.calibration||{}).length?`<tr><td class="muted">Brier per domain</td><td colspan="2" class="mono">${JSON.stringify(sm.calibration)}</td></tr>`:'');
+    const evd=await api('/evidence');
+    $('#contradictions').innerHTML='<tr><th>subject</th><th>external claim</th><th>observed</th><th>status</th></tr>'+
+      (evd.contradictions.map(c=>`<tr><td class="mono">${c.subject}.${c.attribute}</td>
+        <td>${c.claim_a.value} <span class="muted">(${c.claim_a.source})</span></td>
+        <td>${c.claim_b.value} <span class="muted">(${c.claim_b.source})</span></td>
+        <td><span class="pill ${c.status==='RESOLVED_B'?'ACTIVE':'PENDING_HUMAN'}">${c.status}</span></td></tr>`).join('')
+       ||'<tr><td class="muted" colspan="4">no contradictions detected</td></tr>');
 
     const pols=await api('/policies');
     $('#policies').innerHTML='<tr><th>id</th><th>description</th><th>status</th><th>evidence</th><th>agreements</th><th>origin</th></tr>'+

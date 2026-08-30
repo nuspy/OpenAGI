@@ -121,13 +121,14 @@ class Supervisor:
         self.taint = taint
         self.config = config or Config()
 
-    def evaluate(self, decision: ProposedDecision, cycle: int | None) -> dict:
+    def evaluate(self, decision: ProposedDecision, cycle: int | None,
+                 advisories: list[str] | None = None) -> dict:
         # taint stamping happens here so no upstream component can forget it
         if not decision.tainted:
             decision.tainted = bool(decision.derived_from) or self.taint.tainted(cycle)
 
         status = VerdictStatus.GRANTED.value
-        reasons: list[str] = []
+        reasons: list[str] = [f"[advisory] {a}" for a in (advisories or [])]
         triggered: list[str] = []
         for g in self.guardrails.active():
             if not _matches(g.get("conditions", {}), decision):

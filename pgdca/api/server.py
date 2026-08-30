@@ -73,6 +73,25 @@ def create_app(ctrl: Controller) -> FastAPI:
     def strategies():
         return ctrl.strategies.snapshot()
 
+    @app.get("/api/selfmodel")
+    def selfmodel():
+        snap = ctrl.self_model.snapshot()
+        snap["calibration"] = ctrl.calibration.snapshot()
+        return snap
+
+    @app.get("/api/evidence")
+    def evidence():
+        return ctrl.evidence_store.snapshot()
+
+    @app.post("/api/contradictions/{contradiction_id}/resolve")
+    def resolve_contradiction(contradiction_id: str, body: dict = Body(...),
+                              x_actor: str | None = Header(default=None)):
+        guard(lambda: ctrl.evidence.resolve(contradiction_id,
+                                            body.get("status", "UNRESOLVED"),
+                                            _actor(x_actor),
+                                            body.get("note", "")))
+        return {"ok": True}
+
     @app.get("/api/capabilities")
     def capabilities():
         snap = ctrl.capability_store.snapshot()

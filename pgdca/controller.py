@@ -20,8 +20,11 @@ from .events import Actor, Ev
 from .graph import GraphProjection
 from .memory.audit import AuditEngine
 from .memory.calibration import CalibrationProjection
+from .memory.counterfactual import CounterfactualEngine
+from .memory.evidence import EvidenceManager, EvidenceProjection
 from .memory.journal import JournalProjection
 from .memory.policies import PolicyEngine, PolicyProjection
+from .memory.selfmodel import SelfModelProjection
 from .planning import StrategyEngine, StrategyProjection
 from .runtime import Runtime
 from .security.budgets import BudgetProjection, set_budget
@@ -83,6 +86,10 @@ class Controller:
         self.strategy_engine = StrategyEngine(runtime, self.strategies,
                                               self.gateway, self.graph,
                                               self.budgets, self.config)
+        self.self_model = runtime.register(SelfModelProjection(self.config))
+        self.evidence_store = runtime.register(EvidenceProjection())
+        self.evidence = EvidenceManager(runtime, self.evidence_store)
+        self.counterfactual = CounterfactualEngine(runtime)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -281,7 +288,48 @@ class Controller:
             self._check_control()
             self._execute(decision)
             return {"re_executed": True}
+        if not approve and executed:
+            comp = self._compensate(rec)
+            return {"recorded": True, "already_executed": True,
+                    "compensated": comp}
         return {"recorded": True, "already_executed": executed}
+
+    def _compensate(self, record: dict) -> bool:
+        """A human revocation of an executed action triggers compensation
+        when a compensating tool exists (spec: rollback/refund workflow).
+        The revocation itself is the authorization."""
+        d = record.get("decision", {})
+        comp_tool = f"compensate.{d.get('action_name')}"
+        if comp_tool not in self.registry.names(enabled_only=False):
+            return False
+        params = {"factor_id": d.get("params", {}).get("factor_id"),
+                  "quantity": d.get("params", {}).get("quantity", 0),
+                  "decision_id": d.get("id")}
+        result = self.registry.execute(comp_tool, params)
+        if result.status != "ok":
+            self.runtime.emit(Ev.ERROR_DETECTED,
+                              {"decision_id": d.get("id"),
+                               "class": "compensation_failed",
+                               "error": result.error}, Actor.SYSTEM)
+            return False
+        refunded = float(result.observation.get("refunded", 0.0))
+        if refunded:
+            self.runtime.emit(Ev.RESOURCE_SPENT,
+                              {"name": "money", "amount": -refunded,
+                               "decision_id": d.get("id"),
+                               "compensation": True}, Actor.SYSTEM)
+        fid = params["factor_id"]
+        f = self.graph.node(fid) if fid else None
+        if f is not None:
+            newq = max(0, f["props"].get("acquired_qty", 0)
+                       - int(params["quantity"] or 0))
+            self.runtime.emit(Ev.NODE_UPDATED,
+                              {"node_id": fid, "props": {"acquired_qty": newq}},
+                              Actor.SYSTEM)
+        self.runtime.emit(Ev.COMPENSATION_EXECUTED,
+                          {"decision_id": d.get("id"), "tool": comp_tool,
+                           "result": result.observation}, Actor.HUMAN)
+        return True
 
     # ------------------------------------------------------------ the loop
     def run(self, max_cycles: int | None = None) -> list[CycleResult]:
@@ -344,6 +392,18 @@ class Controller:
         for h in hyps:
             self.runtime.emit(Ev.HYPOTHESIS_CREATED,
                               {"hypothesis": h.to_dict()}, Actor.SYSTEM)
+        for h in hyps:
+            # provenance: proposals drawing on external content record their
+            # claims explicitly (contradiction management catches them later)
+            if h.derived_from and h.params.get("factor_id") and "unit_cost" in h.params:
+                self.evidence.record_claim(h.params["factor_id"], "unit_cost",
+                                           h.params["unit_cost"],
+                                           h.derived_from[0], "external")
+            # calibrated priors: claimed probabilities shrink toward the
+            # observed rate (the LLM proposes; history calibrates)
+            h.params.setdefault("claimed_success_prob", h.success_prob)
+            h.success_prob = self.self_model.calibrated_success(
+                h.params.get("domain", "general"), h.action_name, h.success_prob)
         if not hyps:
             self.runtime.emit(Ev.HUMAN_ESCALATION,
                               {"reason": "no viable hypotheses for open targets"},
@@ -430,8 +490,19 @@ class Controller:
         }, Actor.SYSTEM)
         self.policy_engine.shadow_evaluate(decision.to_dict(), dec_context)
 
+        # behavioral recurrence: past failures with the same context
+        # signature become an advisory on the verdict (spec: Auditor Agent
+        # and Behavioral Recurrence)
+        advisories = []
+        preview = self._features_preview(decision, fsnap)
+        adv = self.self_model.recurrence_advisory(
+            PolicyProjection.signature(preview))
+        if adv:
+            advisories.append(adv)
+
         # deterministic authority: the supervisor rules before anything runs
-        verdict = self.supervisor.evaluate(decision, self.cycle)
+        verdict = self.supervisor.evaluate(decision, self.cycle,
+                                           advisories=advisories)
         if verdict["status"] == VerdictStatus.DENIED.value:
             self._denied_signatures.add(self._signature(decision))
             self.runtime.emit(Ev.HYPOTHESIS_PRUNED,
@@ -454,6 +525,23 @@ class Controller:
         return result
 
     # -------------------------------------------------------- helpers
+    def _features_preview(self, decision: ProposedDecision, fsnap: dict) -> dict:
+        """Same feature formulas the audit uses, computed at decision time
+        for behavioral-recurrence lookup."""
+        limit = self.budgets.limit("money") or 1.0
+        remaining = self.budgets.remaining("money")
+        cost = float(decision.params.get("total_cost", 0.0))
+        imp = fsnap.get("importance")
+        sub = fsnap.get("substitutability")
+        return {
+            "action": decision.action_name,
+            "domain": decision.params.get("domain", "general"),
+            "budget_constrained": (remaining - cost) < 0.5 * limit,
+            "picked_high_importance_low_subst": (
+                float(imp or 0.0) >= 0.7
+                and float(sub if sub is not None else 1.0) <= 0.4),
+        }
+
     @staticmethod
     def _signature(h) -> tuple:
         params = h.params if isinstance(h, (Hypothesis, ProposedDecision)) else h["params"]
@@ -607,6 +695,28 @@ class Controller:
                                              "higher-value active pursuits"},
                                   Actor.SYSTEM)
 
+        # macro-cycle maintenance: graph hygiene - stale, never-corroborated
+        # HYPOTHESIZED edges are pruned (causal-propagation guardrails)
+        if self.cycle and self.cycle % self.config.macro_interval_cycles == 0:
+            pruned = []
+            for e in list(self.graph.edges.values()):
+                if (e["validation_status"] == "HYPOTHESIZED"
+                        and e["validity_status"] == NodeStatus.ACTIVE.value
+                        and (self.cycle - e.get("_cycle", 0))
+                        > self.config.hypothesized_edge_ttl):
+                    self.runtime.emit(Ev.EDGE_UPDATED,
+                                      {"edge_id": e["id"],
+                                       "validity_status":
+                                       NodeStatus.INVALIDATED.value},
+                                      Actor.SYSTEM)
+                    pruned.append(e["id"])
+            if pruned:
+                self.runtime.emit(Ev.GRAPH_MAINTENANCE,
+                                  {"cycle": self.cycle, "pruned_edges": pruned,
+                                   "reason": "hypothesized edges never "
+                                             "corroborated within the TTL"},
+                                  Actor.SYSTEM)
+
         # periodic goal re-evaluation (review_interval per node)
         for g in self.graph.active_goals():
             last = g["props"].get("last_review_cycle", 0)
@@ -643,6 +753,11 @@ class Controller:
                                   {"node_id": obs["factor_id"],
                                    "props": {"unit_cost": obs["unit_cost"],
                                              "cost_confidence": 0.95}}, Actor.SYSTEM)
+                # contradiction management: an observation that conflicts
+                # with a standing external claim becomes explicit evidence
+                self.evidence.check_observation(obs["factor_id"], "unit_cost",
+                                                obs["unit_cost"],
+                                                "market:research_price")
             self.runtime.emit(Ev.OBSERVATION_RECEIVED,
                               {"decision_id": did, "observation": obs},
                               Actor.ENVIRONMENT)
@@ -665,6 +780,7 @@ class Controller:
         self.strategy_engine.note_execution(self._cycle_step_ref, decision,
                                             status == "executed")
         audit_payload = self.audit_engine.run(self.journal.records[did])
+        self.counterfactual.analyze(self.journal.records[did])
         self.policy_engine.learn(audit_payload)
         self._apprentice_check(audit_payload["features"].get("domain", "general"))
         return CycleResult(self.cycle, status, did)

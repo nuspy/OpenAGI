@@ -65,6 +65,16 @@ class JournalProjection:
             rec = self.records.get(p.get("decision_id", ""))
             if rec is not None:
                 rec["audit"] = {k: v for k, v in p.items() if k != "decision_id"}
+        elif t == Ev.COUNTERFACTUAL_ANALYZED.value:
+            rec = self.records.get(p.get("decision_id", ""))
+            if rec is not None:
+                rec["counterfactual"] = {k: v for k, v in p.items()
+                                         if k != "decision_id"}
+        elif t == Ev.COMPENSATION_EXECUTED.value:
+            rec = self.records.get(p.get("decision_id", ""))
+            if rec is not None:
+                rec["compensation"] = {k: v for k, v in p.items()
+                                       if k != "decision_id"}
         elif t == Ev.POLICY_SHADOW_EVALUATED.value:
             rec = self.records.get(p.get("decision_id", ""))
             if rec is not None:
@@ -91,6 +101,8 @@ class JournalProjection:
                               "outcome": rec["outcome"],
                               "verification": rec["verification"]},
             "audit": rec["audit"],
+            "counterfactual": rec.get("counterfactual"),
+            "compensation": rec.get("compensation"),
         }
 
     def for_node(self, node_id: str) -> list[dict]:

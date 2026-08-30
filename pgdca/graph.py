@@ -53,6 +53,7 @@ class GraphProjection:
                 self.dirty.add(n["id"])
         elif t == Ev.EDGE_ADDED.value:
             e = p["edge"]
+            e.setdefault("_cycle", ev.cycle or 0)   # for hygiene TTL
             self.edges[e["id"]] = e
             self.dirty.update((e["src"], e["dst"]))
         elif t == Ev.EDGE_UPDATED.value:
