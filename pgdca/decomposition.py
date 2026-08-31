@@ -72,7 +72,7 @@ class DecompositionEngine:
             opened.append(self._open_thread(t, proposal))
         return opened
 
-    def propose(self, t: dict) -> dict:
+    def propose(self, t: dict, conversation: list | None = None) -> dict:
         summary = {
             "goals": [{"id": g["id"], "label": g["label"]}
                       for g in sorted(self.graph.active_goals(),
@@ -85,12 +85,24 @@ class DecompositionEngine:
             "target": {"id": t["id"], "label": t["label"],
                        "priority": t["props"].get("priority", 0.5)},
             "graph": summary,
-            "instruction": "break this target into the next concrete "
-                           "sub-targets; when a fact only the owner knows "
-                           "changes the branch (own vs buy, deadline, "
-                           "budget), ask_owner with explicit options and "
-                           "propose the sub-targets of each branch with "
-                           "params.branch set to that option",
+            # the owner's answers so far: refine the questions and scale the
+            # breakdown to them (a small hill vs an 8000m peak)
+            "conversation": conversation or [],
+            "instruction":
+                "You are scoping a goal WITH its owner before acting. FIRST "
+                "understand it: what exactly they want, where and when, the "
+                "constraints and conditions, and what they already have vs "
+                "need. Use ask_owner (with explicit options where it forks) "
+                "for every fact only the owner knows and that CHANGES the "
+                "plan - e.g. the destination and its difficulty (a small "
+                "hill differs enormously from an 8000m peak: gear, permits, "
+                "training, guides, weather window), what equipment they own "
+                "and its condition, fitness/experience, deadline, budget, "
+                "companions. Do NOT assume defaults for these. THEN propose "
+                "the concrete sub-targets, scaled to the answers, tagging "
+                "each with params.branch when it belongs to one answer of a "
+                "question. Ask before you break down; break down "
+                "proportionately to the real situation.",
         })
         proposal = {"target_id": t["id"], "subtargets": [], "questions": [],
                     "notes": [r for r in resp.risks if isinstance(r, dict)]}
@@ -127,6 +139,41 @@ class DecompositionEngine:
             {"checkpoint": "decomposition", "node_id": t["id"],
              "proposal": proposal, "cycle": self.runtime.cycle},
             subject={"kind": "node", "id": t["id"]})
+
+    def rescope_for_thread(self, thread_id: str, history: list) -> bool:
+        """Re-scope a decomposition thread as the owner answers: refine the
+        questions and the breakdown, post them, and carry the updated
+        proposal so resolving weaves the CURRENT one. Returns True when it
+        handled the reply (so the generic Q&A answer is skipped)."""
+        th = self.deliberation.projection.threads.get(thread_id)
+        if th is None:
+            return False
+        packet = next((m.get("packet") for m in reversed(th["messages"])
+                       if (m.get("packet") or {}).get("checkpoint")
+                       == "decomposition"), None)
+        if not packet:
+            return False
+        t = self.graph.node(packet.get("node_id", ""))
+        if t is None:
+            return False
+        convo = [{"author": m["author"], "text": m["text"]}
+                 for m in history if m.get("text")]
+        proposal = self.propose(t, conversation=convo)
+        qs = "; ".join(
+            q["question"] + (f" [{' / '.join(q['options'])}]"
+                             if q["options"] else "")
+            for q in proposal["questions"])
+        text = ("Ho aggiornato in base a quello che mi hai detto. "
+                + (f"Ancora qualche domanda: {qs} " if qs else "")
+                + (f"Piano attuale: {len(proposal['subtargets'])} passo/i "
+                   f"({', '.join(s['label'] for s in proposal['subtargets'])}). "
+                   if proposal["subtargets"] else "")
+                + "Rispondi ancora, oppure conferma per inserirli nel piano.")
+        self.deliberation.post_system(thread_id, text,
+                                      {"checkpoint": "decomposition",
+                                       "node_id": t["id"], "proposal": proposal,
+                                       "cycle": self.runtime.cycle})
+        return True
 
     # ------------------------------------------------------------- weave
     def apply(self, proposal: dict, actor: Actor,

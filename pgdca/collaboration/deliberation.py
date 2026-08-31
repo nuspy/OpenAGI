@@ -82,6 +82,10 @@ class DeliberationEngine:
         self.evidence_store = evidence_store
         self.budgets = budgets
         self.config = config or Config()
+        # optional (thread_id, history) -> bool hook: a scoping thread (e.g.
+        # target decomposition) refines itself on each human reply instead
+        # of a generic Q&A answer. Set by the controller.
+        self.scoping_hook = None
 
     # ------------------------------------------------------------- open
     def open(self, subject_kind: str, subject_id: str, question: str,
@@ -142,9 +146,28 @@ class DeliberationEngine:
                           {"thread_id": thread_id,
                            "message": {"author": actor.value, "text": text}},
                           actor)
+        # scoping threads (e.g. decomposition) refine themselves on each
+        # reply; fall back to the generic evidence-grounded answer otherwise
+        if self.scoping_hook is not None:
+            try:
+                if self.scoping_hook(thread_id, list(th["messages"])):
+                    return self.projection.threads[thread_id]
+            except Exception:  # noqa: BLE001 - never break the conversation
+                pass
         s = th["subject"]
         evidence = self._evidence(s["kind"], s["id"])
         self._answer(thread_id, text, evidence)
+        return self.projection.threads[thread_id]
+
+    def post_system(self, thread_id: str, text: str,
+                    packet: dict | None = None) -> dict:
+        """Append a system turn (used by scoping hooks). No generative call."""
+        msg = {"author": Actor.SYSTEM.value, "text": text}
+        if packet is not None:
+            msg["packet"] = packet
+        self.runtime.emit(Ev.DELIBERATION_MESSAGE,
+                          {"thread_id": thread_id, "message": msg},
+                          Actor.SYSTEM)
         return self.projection.threads[thread_id]
 
     def _answer(self, thread_id: str, question: str, evidence: dict) -> None:

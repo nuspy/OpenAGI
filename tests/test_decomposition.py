@@ -14,12 +14,25 @@ from pgdca.scenario.toy import create
 
 
 class DecomposingAdapter:
-    """Scripted: decompose proposes an owner question + two branches."""
+    """Scripted: decompose proposes an owner question + two branches.
+    When the conversation mentions a hard peak, it scales the breakdown up."""
 
     def generate(self, request):
         role = request.get("role")
         if role == "decompose":
             t = request["context"]["target"]
+            convo = " ".join(m.get("text", "") for m in
+                             request["context"].get("conversation", []))
+            if "k2" in convo.lower():
+                return {
+                    "schema": SCHEMA_VERSION, "role": role,
+                    "summary": "hard peak breakdown",
+                    "hypotheses": [
+                        {"action_name": "propose_subtarget", "params": {
+                            "label": "hire a mountain guide", "priority": 0.9}},
+                        {"action_name": "propose_subtarget", "params": {
+                            "label": "obtain climbing permits", "priority": 0.9}},
+                    ]}
             return {
                 "schema": SCHEMA_VERSION, "role": role,
                 "summary": f"breakdown of {t['id']}",
@@ -86,6 +99,25 @@ def test_one_thread_per_target_even_before_resolution():
     ctrl.step()
     ctrl.step()
     assert len(ctrl.deliberations.for_subject("node", tid)) == 1
+
+
+def test_scoping_conversation_refines_the_breakdown_on_reply():
+    ctrl, tid = make_bare_target()
+    ctrl.step()
+    th = ctrl.deliberations.for_subject("node", tid)[0]
+    # the owner answers WHERE they are going; the breakdown must adapt
+    ctrl.reply_deliberation(th["id"], "vado sul K2", Actor.HUMAN)
+    th = ctrl.deliberations.threads[th["id"]]
+    latest = [m for m in th["messages"]
+              if (m.get("packet") or {}).get("checkpoint") == "decomposition"][-1]
+    labels = {s["label"] for s in latest["packet"]["proposal"]["subtargets"]}
+    assert "hire a mountain guide" in labels and "obtain climbing permits" in labels
+    # resolving now weaves the REFINED breakdown, not the opening one
+    ctrl.resolve_deliberation(th["id"], "confirmed", note="ok",
+                              actor=Actor.HUMAN)
+    from pgdca.domain import NodeKind as NK
+    subs = {s["label"] for s in ctrl.graph.by_kind(NK.SUB_TARGET)}
+    assert "hire a mountain guide" in subs
 
 
 def test_toy_world_targets_are_fed_and_never_decomposed():

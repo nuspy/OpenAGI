@@ -117,6 +117,9 @@ class Controller:
         self.decomposition = DecompositionEngine(
             runtime, self.gateway, self.graph, self.deliberation,
             self.config, budgets=self.budgets)
+        # scoping conversation: a decomposition thread refines itself as the
+        # human answers (K2 vs a hill changes the whole breakdown)
+        self.deliberation.scoping_hook = self.decomposition.rescope_for_thread
         from .followups import FollowupEngine, FollowupProjection
         self.followup_store = runtime.register(FollowupProjection())
         self.followups = FollowupEngine(runtime, self.followup_store,
@@ -458,6 +461,14 @@ class Controller:
         # decomposition threads: confirming/modifying weaves the agreed
         # breakdown (optionally one answered branch) into the graph
         packet = (th["messages"][0].get("packet") or {}) if th["messages"] else {}
+        # use the LATEST decomposition packet: the scoping conversation may
+        # have refined the breakdown after the opening message
+        latest_decomp = next(
+            (m.get("packet") for m in reversed(th["messages"])
+             if (m.get("packet") or {}).get("checkpoint") == "decomposition"),
+            None)
+        if latest_decomp and outcome in ("confirmed", "modified"):
+            packet = latest_decomp
         if (packet.get("checkpoint") == "decomposition"
                 and outcome in ("confirmed", "modified")):
             proposal = packet.get("proposal") or {}
