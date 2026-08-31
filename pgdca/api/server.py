@@ -998,11 +998,54 @@ PGDCA avviato.
                   else f"attiva - lavora da solo (un ciclo ogni ~{args.pace:g}s),"
                        " si ferma quando serve una tua decisione"}
 Ctrl+C per fermare.""", flush=True)
-    # without a graceful-shutdown cap, Ctrl+C hangs on Windows: the GUI's
-    # open SSE stream (/api/events/stream) never closes by itself and
-    # uvicorn waits for it forever
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning",
-                timeout_graceful_shutdown=3)
+    _serve(uvicorn, app, args.port)
+
+
+def _serve(uvicorn, app, port: int) -> None:
+    """Run uvicorn so Ctrl+C ALWAYS closes it, promptly, on Windows too.
+
+    Two problems are solved here:
+    - on Windows the asyncio Proactor loop often does not deliver SIGINT to
+      uvicorn until a network event arrives, so Ctrl+C looked ignored;
+    - the GUI keeps an SSE stream open, so a graceful shutdown could wait.
+
+    Fix: run the server in a background thread and block the MAIN thread on
+    a short sleep loop, which DOES receive SIGINT immediately. On the signal
+    we ask the server to stop and, as a hard backstop, force-exit the
+    process - the listening socket dies with it.
+    """
+    import os
+    import signal
+    import threading
+    import time
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=port,
+                            log_level="warning")
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None   # the main thread handles them
+
+    t = threading.Thread(target=server.run, name="uvicorn", daemon=True)
+    t.start()
+
+    def _quit(*_):
+        # exit at once: no graceful wait (which on an open SSE stream both
+        # hangs and prints a scary cancellation traceback). The process dying
+        # closes the socket; the event store is transactional per write.
+        print("\n[pgdca] chiuso.", flush=True)
+        os._exit(0)
+
+    for sig in (signal.SIGINT, getattr(signal, "SIGBREAK", None),
+                getattr(signal, "SIGTERM", None)):
+        if sig is not None:
+            try:
+                signal.signal(sig, _quit)
+            except (ValueError, OSError):   # not in main thread / unsupported
+                pass
+    try:
+        while t.is_alive():
+            time.sleep(0.3)
+    except KeyboardInterrupt:
+        _quit()
 
 
 if __name__ == "__main__":  # pragma: no cover
