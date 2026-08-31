@@ -151,13 +151,39 @@ class LocalProviderAdapter:
                 model_by_role=self.model_by_role)
         return self._anthropic_cache[cache_key]
 
+    def _ensure_assignment(self, consumer: str) -> None:
+        """Self-heal a common dead-end: a provider exists but nothing is
+        assigned to this consumer, so the whole system silently can't think.
+        With a single provider the choice is unambiguous - assign it."""
+        if self.registry.provider_for(consumer) is not None:
+            return
+        try:
+            provs = self.registry.load().get("providers", [])
+        except Exception:  # noqa: BLE001 - injected registries in tests
+            return
+        if len(provs) == 1:
+            try:
+                self.registry.assign(consumer, provs[0]["id"])
+            except Exception:  # noqa: BLE001
+                pass
+
     def _endpoint(self, role: str) -> tuple[str, dict, str]:
         consumer = self.consumer_by_role.get(role, self.consumer)
+        self._ensure_assignment(consumer)
         resolved = self.registry.endpoint_for(consumer, carica=self.carica)
         if resolved is None:
+            provs = []
+            try:
+                provs = self.registry.load().get("providers", [])
+            except Exception:  # noqa: BLE001
+                pass
+            hint = ("nessun provider configurato: aprine uno dal tab "
+                    "'LLM & Collegamenti'" if not provs
+                    else f"scegli il provider per '{consumer}' nel tab "
+                    "'LLM & Collegamenti' (Assegnazioni)")
             raise RuntimeError(
-                f"llmswitch: no provider assigned to consumer '{consumer}' "
-                f"(registry {getattr(self.registry, 'path', '?')})")
+                f"llmswitch: {hint} "
+                f"(registro {getattr(self.registry, 'path', '?')})")
         base, key, model = resolved
         model = self.model_by_role.get(role) or model
         if not base or not model:

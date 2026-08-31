@@ -66,7 +66,15 @@ class DecompositionEngine:
             return []
         opened = []
         for t in self.candidates()[:self.config.decomposition_max_per_cycle]:
-            proposal = self.propose(t)
+            try:
+                proposal = self.propose(t)
+            except Exception as exc:  # noqa: BLE001 - a transient LLM error
+                # must not crash the cycle nor open an empty thread; retry
+                # next cycle
+                import logging
+                logging.getLogger("pgdca.decomposition").warning(
+                    "decomposizione di %s rimandata: %s", t["id"], exc)
+                continue
             if not proposal["subtargets"] and not proposal["questions"]:
                 continue          # nothing worth the owner's attention
             opened.append(self._open_thread(t, proposal))

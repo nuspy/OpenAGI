@@ -851,6 +851,22 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                 LocalProviderAdapter,
             )
             adapter = LocalProviderAdapter()
+            # a provider with no assignment silently blocks all cognition:
+            # if there is exactly one provider and no 'chat' assignment,
+            # assign it so an added provider just works
+            try:
+                reg = adapter.registry
+                data = reg.load()
+                provs = data.get("providers", [])
+                assigned = data.get("assignments", {})
+                if len(provs) == 1:
+                    for c in ("chat", "copilot"):
+                        if not assigned.get(c):
+                            reg.assign(c, provs[0]["id"])
+                            print(f"[pgdca] provider unico '{provs[0]['id']}' "
+                                  f"assegnato a '{c}'", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pgdca] avviso registro llmswitch: {exc}", flush=True)
         except ImportError as exc:
             if args.adapter == "llmswitch":
                 raise SystemExit(f"llmswitch adapter unavailable: {exc}")

@@ -71,7 +71,13 @@ class ScoutingEngine:
             return []
         opened = []
         for t in self.candidates()[:self.config.scouting_max_per_cycle]:
-            options = self.scout(t)
+            try:
+                options = self.scout(t)
+            except Exception as exc:  # noqa: BLE001 - transient browser/LLM
+                import logging
+                logging.getLogger("pgdca.scouting").warning(
+                    "scouting di %s rimandato: %s", t["id"], exc)
+                continue
             if options:
                 opened.append(self._open_thread(t, options))
         return opened

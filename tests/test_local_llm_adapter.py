@@ -120,7 +120,8 @@ def test_m13_routing_by_role():
 def test_missing_assignment_is_a_clear_error():
     adapter = make(FakePost(json.dumps(VALID)), endpoints={})
     problems = run_conformance(adapter, [{"role": "hypotheses", "context": {}}])
-    assert problems and "no provider assigned" in problems[0]
+    # the message now guides the user to the LLM tab instead of jargon
+    assert problems and "LLM & Collegamenti" in problems[0]
 
 
 def test_bearer_header_from_key_but_not_for_local():

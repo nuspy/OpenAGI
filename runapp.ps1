@@ -147,23 +147,36 @@ $btnStart.Add_Click({
     if ($cbEmail.Checked)     { $args += @("--email", "smtp") }
     if ($cbBrowserA.Checked)  { $args += @("--browser", "playwright") }
     # console visibile: i log si vedono e Ctrl+C ferma il server
-    Start-Process -FilePath $venvPy -ArgumentList $args -WorkingDirectory $repo | Out-Null
-    $status.Text = "Avviato su http://127.0.0.1:$port ..."
+    # console propria: il server ci stampa i log e Ctrl+C LA' lo chiude
+    $proc = Start-Process -FilePath $venvPy -ArgumentList $args `
+                          -WorkingDirectory $repo -PassThru
+    $script:serverProc = $proc
+    $status.Text = "Avviato su http://127.0.0.1:$port (finestra server: Ctrl+C per chiudere, oppure 'Ferma server' qui)."
     if ($cbBrowser.Checked) {
         Start-Job -ScriptBlock { param($u) Start-Sleep 3; Start-Process $u } `
                   -ArgumentList "http://127.0.0.1:$port" | Out-Null
     }
 })
 
+function Stop-Server([int]$port) {
+    # prima il processo che abbiamo avviato noi, poi chi tiene la porta
+    if ($script:serverProc -and -not $script:serverProc.HasExited) {
+        try { Stop-Process -Id $script:serverProc.Id -Force -Confirm:$false } catch {}
+    }
+    $procId = Get-ServerPid $port
+    if ($procId) { try { Stop-Process -Id $procId -Force -Confirm:$false } catch {} }
+    return $procId
+}
+
 $btnStop.Add_Click({
     $port = [int]$nPort.Value
-    $procId = Get-ServerPid $port
-    if ($procId) {
-        Stop-Process -Id $procId -Force -Confirm:$false
-        $status.Text = "Server sulla porta $port fermato (PID $procId)."
-    } else {
-        $status.Text = "Nessun server in ascolto sulla porta $port."
-    }
+    $procId = Stop-Server $port
+    $status.Text = if ($procId -or $script:serverProc) {
+        "Server sulla porta $port fermato." } else {
+        "Nessun server in ascolto sulla porta $port." }
 })
+
+# chiudere il launcher ferma anche il server che ha avviato
+$form.Add_FormClosing({ Stop-Server ([int]$nPort.Value) | Out-Null })
 
 [void]$form.ShowDialog()
