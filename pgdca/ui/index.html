@@ -538,14 +538,25 @@ function renderThreadView(t){
 /* ---------------- inbox ---------------- */
 function decisionCard(e,pending){
   const d=e.decision,v=e.verdict;
+  const expected=typeof d.expected==='string'?d.expected
+                 :Object.keys(d.expected||{}).length?JSON.stringify(d.expected):'';
   return `<div class="card ${pending?'pending':''}">
     <b>${d.action_name}</b> <span class="mono">${JSON.stringify(d.params)}</span><br>
     <span class="pill ${v.status}">${v.status}</span>
+    <span class="pill">${d.risk_class}</span>
     ${d.tainted?'<span class="pill DENIED">TAINTED</span>':''}
     ${(d.derived_from||[]).length?'<span class="pill DENIED">from external content</span>':''}
-    <div class="muted" style="margin:6px 0">${(v.reasons||[]).join('<br>')||'no guardrail annotations'}</div>
+    ${d.rationale?`<div style="margin:6px 0"><b>Why:</b> ${esc(d.rationale)}</div>`:''}
+    ${expected?`<div class="muted"><b>Expected:</b> ${esc(expected)}</div>`:''}
+    <div class="muted" style="margin:4px 0">
+      <b>p(success):</b> ${Math.round((d.success_prob||0)*100)}%
+      ${d.cost?` · <b>cost:</b> ${d.cost}`:''}
+      ${(d.goal_refs||[]).length?` · <b>serves:</b> ${(d.goal_refs||[]).map(esc).join(', ')}`:''}
+    </div>
+    <div class="muted" style="margin:6px 0">${(v.reasons||[]).map(esc).join('<br>')||'no guardrail annotations'}</div>
     ${pending?`<button class="ok" onclick="resolvePending(true)">Approve</button>
-               <button class="danger" onclick="resolvePending(false)">Deny</button>`
+               <button class="danger" onclick="resolvePending(false)">Deny</button>
+               <button onclick="showRationale('${d.id}')">Alternatives & full record</button>`
              :`<button onclick="override('${v.id}',true)">Force approve</button>
                <button onclick="override('${v.id}',false)">Revoke</button>
                <button onclick="showRationale('${d.id}')">Rationale</button>`}
