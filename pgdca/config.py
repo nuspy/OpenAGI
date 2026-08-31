@@ -89,6 +89,11 @@ class Config:
     decomposition_enabled: bool = True         # unfed targets get a breakdown proposal
     decomposition_max_per_cycle: int = 1       # LLM cost control
 
+    # --- product scouting (real options -> owner's choice -> payment) ---
+    scouting_enabled: bool = True              # buy-targets get real options (needs browser)
+    scouting_max_per_cycle: int = 1
+    scouting_max_pages: int = 3                # browser fetches per scouting
+
     # --- capability-acquisition sandbox (M10) ---
     sandbox_cpu_seconds: int = 10
     sandbox_memory_bytes: int = 512 * 1024 * 1024

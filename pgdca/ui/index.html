@@ -705,6 +705,25 @@ function renderThreadList(ths){
       <td><button onclick="viewThread('${t.id}')">Open</button></td></tr>`).join('')
      ||'<tr><td class="muted" colspan="5">no discussions yet</td></tr>');
 }
+function optionCards(t,pk){
+  const opts=pk.options||[];
+  return '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px">'+opts.map((o,i)=>`
+    <div class="card" style="width:210px">
+      ${o.image_url?`<img src="${esc(o.image_url)}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:8px" onerror="this.style.display='none'">`:''}
+      <b>${esc(o.label)}</b>
+      <div style="margin:4px 0"><b>${o.price} ${esc(o.currency||'EUR')}</b>${o.merchant?` · ${esc(o.merchant)}`:''}</div>
+      <div class="muted" style="font-size:12px">${esc(o.characteristics||'')}</div>
+      ${o.rationale?`<div class="muted" style="font-size:11px;margin-top:4px">${esc(o.rationale)}</div>`:''}
+      ${o.url?`<div style="margin-top:4px"><a href="${esc(o.url)}" target="_blank" rel="noopener" style="font-size:12px">vedi sul sito ↗</a></div>`:''}
+      ${t.status==='OPEN'?`<button class="ok" style="width:100%;margin-top:6px" onclick="chooseOption('${t.id}',${i})">Scegli questa</button>`:''}
+    </div>`).join('')+'</div>';
+}
+async function chooseOption(tid,i){
+  if(!confirm('Scegliere questa opzione? Creo il pagamento: passerà dalla tua approvazione e dal codice 2FA.'))return;
+  await post('/deliberations/'+tid+'/resolve',
+             {outcome:'modified',note:'opzione scelta via GUI',changes:{chosen:i}}).catch(alert);
+  refresh();
+}
 const CHATBAR=`<div class="chatbar">
     <textarea id="reply-text" placeholder="Scrivi qui… (Invio per mandare, Shift+Invio a capo)" onkeydown="chatKey(event)"></textarea>
     <button class="primary" style="align-self:flex-end" onclick="sendChat()">Invia</button></div>`;
@@ -781,7 +800,8 @@ function renderThreadView2(t,target='#threadview',header=''){
     <span class="muted">opened by ${t.opened_by}, cycle ${t.cycle??'–'}</span></h3>`;
   h+='<div class="chatlog" id="chatlog">'+t.messages.map(m=>`<div class="msg ${m.author}"><div class="author">${m.author}</div>
       <div>${esc(m.text)}</div>
-      ${m.packet?`<details><summary class="muted" style="font-size:11px">dettagli proposta</summary><pre>${esc(JSON.stringify(m.packet,null,1))}</pre></details>`:''}
+      ${(m.packet&&m.packet.checkpoint==='scouting')?optionCards(t,m.packet):''}
+      ${(m.packet&&m.packet.checkpoint!=='scouting')?`<details><summary class="muted" style="font-size:11px">dettagli proposta</summary><pre>${esc(JSON.stringify(m.packet,null,1))}</pre></details>`:''}
       ${(m.suggestions||[]).map(s=>`<div class="card">suggested edit: <span class="mono">${esc(JSON.stringify(s.params))}</span><br>
         <span class="muted">${esc(s.rationale||'')}</span>
         ${t.status==='OPEN'?`<br><button class="ok" onclick='applySuggestion("${t.id}",${JSON.stringify(JSON.stringify(s.params))})'>Apply &amp; resolve as modified</button>`:''}</div>`).join('')}

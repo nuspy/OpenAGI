@@ -38,8 +38,29 @@ class MockLlmAdapter:
             return self._decide(ctx)
         if role == "integrate":
             return self._integrate(ctx)
+        if role == "scout":
+            return self._scout(ctx)
         return {"schema": SCHEMA_VERSION, "role": role or "unknown",
                 "summary": "no-op", "hypotheses": []}
+
+    def _scout(self, ctx: dict) -> dict:
+        """Deterministic scouting demo: one search, then two canned options
+        (clearly placeholder) so the flow is visible without a real model."""
+        if ctx.get("phase") == "search":
+            return {"schema": SCHEMA_VERSION, "role": "scout",
+                    "summary": "search", "hypotheses": [
+                        {"action_name": "search_web",
+                         "params": {"url": "https://example.test/"}}]}
+        label = (ctx.get("target") or {}).get("label", "item")
+        opts = [{"label": f"Opzione A per {label}", "price": 240,
+                 "currency": "EUR", "merchant": "DemoShop",
+                 "characteristics": "esempio (adapter mock)"},
+                {"label": f"Opzione B per {label}", "price": 180,
+                 "currency": "EUR", "merchant": "DemoShop",
+                 "characteristics": "esempio piu' economico (mock)"}]
+        return {"schema": SCHEMA_VERSION, "role": "scout", "summary": "options",
+                "hypotheses": [{"action_name": "propose_option", "params": o,
+                                "rationale": "demo"} for o in opts]}
 
     # ------------------------------------------------------------------
     def _hypotheses(self, ctx: dict) -> dict:

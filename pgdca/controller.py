@@ -124,6 +124,10 @@ class Controller:
         self.followup_store = runtime.register(FollowupProjection())
         self.followups = FollowupEngine(runtime, self.followup_store,
                                         self.deliberation, self.graph)
+        from .scouting import ScoutingEngine
+        self.scouting = ScoutingEngine(
+            runtime, self.gateway, self.graph, self.deliberation,
+            self.registry, self.config, budgets=self.budgets)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -246,6 +250,11 @@ class Controller:
         gid = self.runtime.next_id("goal")
         n = node(gid, kind, label, status=NodeStatus.PROPOSED, priority=priority)
         self.runtime.emit(Ev.GOAL_PROPOSED, {"node": n}, actor)
+        # only meta/persistent goals need explicit ratification; a target or
+        # project the OWNER states is already authorized - activate it, else
+        # it would sit PROPOSED forever and the loop would never work it
+        if actor == Actor.HUMAN and kind not in RATIFICATION_KINDS:
+            self.runtime.emit(Ev.GOAL_RATIFIED, {"node_id": gid}, actor)
         return gid
 
     def ratify_goal(self, node_id: str, actor: Actor) -> None:
@@ -480,6 +489,14 @@ class Controller:
                              or (changes.get("proposal") or {}).get("branch", ""))
             effects += self.decomposition.apply(proposal, actor, branch=branch)
 
+        # scouting threads: the owner picks an option (modified with
+        # {"chosen": i}); it becomes a gated "Paga <item>" sub-target
+        if packet.get("checkpoint") == "scouting" and outcome == "modified" \
+                and isinstance(changes, dict) and changes.get("chosen") is not None:
+            effects += self.scouting.apply(
+                packet.get("node_id", ""), packet.get("options", []),
+                int(changes["chosen"]), actor)
+
         # follow-up threads: confirmed = verified & closed, modified with
         # snooze_days postpones, cancelled drops the verification
         if packet.get("checkpoint") == "followup":
@@ -597,6 +614,9 @@ class Controller:
         # proposal + owner questions BEFORE the idle check - a bare human
         # target in an empty world must grow, not sit inert
         self.decomposition.step()
+        # product scouting: a buy-target becomes real, comparable options
+        # (needs the browser); the owner picks, then payment is gated
+        self.scouting.step()
         # scheduled verifications: due follow-ups become consensus threads
         self.followups.check()
 
