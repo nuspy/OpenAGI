@@ -105,13 +105,14 @@
 </nav>
 
 <main id="tab-graph" class="active">
+  <div id="graph-attn"></div>
   <div class="layout">
     <div class="panel" id="svgwrap"><svg id="svg" width="880" height="560"></svg></div>
     <div style="width:340px;flex-shrink:0">
       <div class="panel" id="detail"><h3>Node detail</h3><div class="muted">Click a node to inspect and edit its weights, or open a discussion about it.</div></div>
       <div class="panel" style="margin-top:12px"><h3>New goal</h3>
         <form class="gr" onsubmit="return proposeGoal(event)">
-          <label>Kind <select id="goal-kind"><option>PERSISTENT_GOAL</option><option>META_GOAL</option><option>OBJECTIVE</option></select></label>
+          <label>Kind <select id="goal-kind"><option>TARGET</option><option>PERSISTENT_GOAL</option><option>META_GOAL</option><option>OBJECTIVE</option></select></label>
           <label>Label<input id="goal-label" required placeholder="e.g. Learn to climb"></label>
           <label>Priority<input id="goal-priority" type="number" step="0.05" min="0" max="1" value="0.5"></label>
           <button class="primary">Propose</button>
@@ -319,6 +320,23 @@ const post=(p,body)=>{
 try{$('#operator').value=localStorage.getItem('pgdca-operator')||'';
     $('#operator').onchange=e=>{try{localStorage.setItem('pgdca-operator',e.target.value)}catch(_){}}}catch(_){}
 let selected=null, selectedThread=null, lastSeq=0;
+let pendingEntries=[], allThreads=[];   // per i marcatori sul grafo
+
+// nodi con qualcosa in attesa di te: decisioni pendenti che li toccano,
+// o discussioni aperte (es. la domanda di una decomposizione)
+function pendingMarks(){
+  const marks={};
+  for(const e of pendingEntries){
+    const d=e.decision||{};
+    [d.params&&d.params.factor_id,...(d.goal_refs||[])].filter(Boolean)
+      .forEach(id=>{(marks[id]=marks[id]||{}).decision=true});
+  }
+  for(const t of allThreads){
+    if(t.status==='OPEN'&&t.subject&&t.subject.kind==='node')
+      (marks[t.subject.id]=marks[t.subject.id]||{}).thread=true;
+  }
+  return marks;
+}
 
 /* ---------------- tabs ---------------- */
 function showTab(name){
@@ -448,6 +466,7 @@ function drawGraph(g){
     svg.appendChild(p);
   });
   // nodes
+  const marks=pendingMarks();
   g.nodes.forEach(n=>{
     const {x,y}=pos[n.id];
     const grp=document.createElementNS(NS,'g'); grp.setAttribute('class','node');
@@ -466,17 +485,57 @@ function drawGraph(g){
     const t2=document.createElementNS(NS,'text');
     t2.setAttribute('x',x+8);t2.setAttribute('y',y+30);t2.setAttribute('fill','#64748b');t2.setAttribute('font-size','10');
     t2.textContent=n.kind.toLowerCase()+(n.props.priority!=null?` · pr ${n.props.priority}`:'')+(n.props.importance!=null?` · imp ${n.props.importance}`:'');
-    grp.append(r,t,t2); svg.appendChild(grp);
+    grp.append(r,t,t2);
+    // marcatore "in attesa di te": rosso = decisione da approvare,
+    // ambra = discussione aperta (es. domanda di decomposizione)
+    const mk=marks[n.id];
+    if(mk){
+      const dot=document.createElementNS(NS,'circle');
+      dot.setAttribute('cx',x+W-6);dot.setAttribute('cy',y+2);dot.setAttribute('r',7);
+      dot.setAttribute('fill',mk.decision?'#dc2626':'#f59e0b');
+      dot.setAttribute('stroke','#fff');dot.setAttribute('stroke-width','2');
+      const pulse=document.createElementNS(NS,'animate');
+      pulse.setAttribute('attributeName','r');pulse.setAttribute('values','6;8;6');
+      pulse.setAttribute('dur','1.4s');pulse.setAttribute('repeatCount','indefinite');
+      dot.appendChild(pulse);
+      const dt=document.createElementNS(NS,'text');
+      dt.setAttribute('x',x+W-9);dt.setAttribute('y',y+6);dt.setAttribute('fill','#fff');
+      dt.setAttribute('font-size','10');dt.setAttribute('font-weight','700');
+      dt.textContent='!';
+      dot.appendChild(Object.assign(document.createElementNS(NS,'title'),
+        {textContent:mk.decision?'decisione in attesa della tua approvazione — clicca il nodo'
+                                :'discussione aperta con una domanda per te — clicca il nodo'}));
+      dot.onclick=()=>selectNode(n.id); dt.onclick=()=>selectNode(n.id);
+      grp.append(dot,dt);
+    }
+    svg.appendChild(grp);
   });
 }
 
 async function selectNode(id){
-  selected=id;
+  if(!id)return;
+  selected=id; graphChat=null;
   const g=await api('/graph'); drawGraph(g);
   const n=g.nodes.find(x=>x.id===id); if(!n)return;
   const editable=['importance','priority','substitutability','unit_cost','cost_confidence','quantity_needed'];
-  let html=`<h3>${n.label} <span class="pill ${n.status}">${n.status}</span></h3>
-    <div class="kv"><span class="muted">id</span><span class="mono">${n.id}</span></div>
+  let html=`<h3>${n.label} <span class="pill ${n.status}">${n.status}</span></h3>`;
+  // --- cosa aspetta TE su questo nodo, approvabile qui come nell'inbox ---
+  const mine=pendingEntries.filter(e=>{
+    const d=e.decision||{};
+    return d.params&&d.params.factor_id===id||(d.goal_refs||[]).includes(id);
+  });
+  if(mine.length)
+    html+=`<h3 style="color:var(--bad)">⚠ In attesa di te</h3>`+
+          mine.map(e=>decisionCard(e,true)).join('');
+  const threads=allThreads.filter(t=>t.subject&&t.subject.kind==='node'
+                                     &&t.subject.id===id&&t.status==='OPEN');
+  threads.forEach(t=>{
+    const first=(t.messages&&t.messages[0])||{};
+    html+=`<div class="card pending"><b>💬 Discussione aperta</b>
+      <div class="muted" style="margin:4px 0">${esc((first.text||'').slice(0,220))}</div>
+      <button class="primary" onclick="openGraphChat('${t.id}')">Apri la chat</button></div>`;
+  });
+  html+=`<div class="kv"><span class="muted">id</span><span class="mono">${n.id}</span></div>
     <div class="kv"><span class="muted">kind</span><span>${n.kind}</span></div>`;
   editable.forEach(k=>{ if(n.props[k]!==undefined) html+=`<div class="kv"><span>${k}</span><input id="p-${k}" value="${n.props[k]??''}"></div>`; });
   Object.entries(n.props).forEach(([k,v])=>{ if(!editable.includes(k)) html+=`<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`; });
@@ -489,8 +548,20 @@ async function selectNode(id){
        <button onclick="nodeHistory('${id}')">Decision history</button>
        ${n.status==='PROPOSED'&&['META_GOAL','PERSISTENT_GOAL'].includes(n.kind)
          ?`<button class="ok" onclick="ratifyGoal('${id}')">Ratify</button>`:''}</p>
-    <p class="muted" style="font-size:12px">Manual edits become HUMAN_EDIT events in the journal.</p>`;
+    <p class="muted" style="font-size:12px">Manual edits become HUMAN_EDIT events in the journal.</p>
+    <div id="nodehist"><p class="muted">carico la storia…</p></div>`;
   $('#detail').innerHTML=html;
+  // storia decisioni inline (ultime 5), con accesso al razionale completo
+  api('/nodes/'+id+'/decisions').then(d=>{
+    const box=$('#nodehist'); if(!box)return;
+    const rows=(d.decisions||[]).slice(-5).reverse();
+    box.innerHTML='<h3 style="margin-top:12px">Storia decisioni</h3>'+
+      (rows.map(p=>`<div class="kv"><span><b>${esc(p.what.action)}</b>
+        <span class="muted">${esc(p.why||'').slice(0,90)}</span></span>
+        <span>${p.verdict?`<span class="pill ${p.verdict.status}">${p.verdict.status}</span>`:''}
+        <button onclick="showRationale('${p.decision_id}')">dettagli</button></span></div>`).join('')
+       ||'<p class="muted">nessuna decisione ha ancora toccato questo nodo</p>');
+  }).catch(()=>{const box=$('#nodehist');if(box)box.innerHTML='';});
 }
 
 async function proposeGoal(ev){
@@ -579,16 +650,45 @@ function renderThreadView(t){
   lastThreadRender=sig;
   return renderThreadView2(t);
 }
-function renderThreadView2(t){
+/* --- chat nel pannello del grafo (funzioni unificate, niente cambio tab) --- */
+let graphChat=null, lastGraphChatSig='';
+function openGraphChat(tid){
+  graphChat=tid; selectedThread=tid; draftThread=null; lastGraphChatSig='';
+  showTab('graph'); renderGraphChat(true);
+}
+function closeGraphChat(){graphChat=null;lastGraphChatSig='';selectNode(selected||'');}
+function renderGraphChat(force){
+  const t=allThreads.find(x=>x.id===graphChat); if(!t)return;
+  const sig=t.id+':'+(t.messages||[]).length+':'+t.status;
+  if(!force&&sig===lastGraphChatSig)return;
+  if(document.activeElement===$('#reply-text')&&!force&&sig===lastGraphChatSig)return;
+  lastGraphChatSig=sig;
+  renderThreadView2(t,'#detail',
+    `<p><button onclick="closeGraphChat()">← torna al nodo</button></p>`);
+}
+function renderAttention(){
+  const box=$('#graph-attn'); if(!box)return;
+  const parts=[];
+  pendingEntries.forEach(e=>parts.push(decisionCard(e,true)));
+  allThreads.filter(t=>t.status==='OPEN'&&t.opened_by!=='human').forEach(t=>{
+    const first=(t.messages&&t.messages[0])||{};
+    parts.push(`<div class="card pending">💬 <b>${esc(t.subject.kind)} <span class="mono">${esc(t.subject.id)}</span></b>
+      <div class="muted" style="margin:4px 0">${esc((first.text||'').slice(0,200))}</div>
+      <button class="primary" onclick="openGraphChat('${t.id}')">Rispondi</button></div>`);
+  });
+  box.innerHTML=parts.length?`<div class="panel" style="margin-bottom:12px;border-color:var(--warn)">
+    <h3>⚠ In attesa di te <span class="muted">(approva, nega o rispondi qui)</span></h3>${parts.join('')}</div>`:'';
+}
+function renderThreadView2(t,target='#threadview',header=''){
   if(!t&&draftThread){
-    $('#threadview').innerHTML=`<h3>Nuova discussione — ${esc(draftThread.kind)} <span class="mono">${esc(draftThread.id)}</span></h3>
+    $(target).innerHTML=`<h3>Nuova discussione — ${esc(draftThread.kind)} <span class="mono">${esc(draftThread.id)}</span></h3>
       <div class="chatlog"><div class="msg system"><div class="author">system</div>
       <div>Chiedimi qualsiasi cosa su questo soggetto: perché l'ho proposto, le alternative, i rischi. Il primo messaggio apre la discussione.</div></div></div>`+CHATBAR;
     $('#reply-text')?.focus();
     return;
   }
-  if(!t){$('#threadview').innerHTML='<p class="muted">Select a thread.</p>';return}
-  let h=`<h3>${t.id} — ${t.subject.kind} <span class="mono">${t.subject.id}</span>
+  if(!t){$(target).innerHTML='<p class="muted">Select a thread.</p>';return}
+  let h=header+`<h3>${t.id} — ${t.subject.kind} <span class="mono">${t.subject.id}</span>
     <span class="pill ${t.status==='OPEN'?'PENDING_HUMAN':'ACTIVE'}">${t.status}</span>
     <span class="muted">opened by ${t.opened_by}, cycle ${t.cycle??'–'}</span></h3>`;
   h+='<div class="chatlog" id="chatlog">'+t.messages.map(m=>`<div class="msg ${m.author}"><div class="author">${m.author}</div>
@@ -608,7 +708,7 @@ function renderThreadView2(t){
         ${(t.resolution.effects||[]).length?`· effects <span class="mono">${esc(JSON.stringify(t.resolution.effects))}</span>`:''}</p>`;
   }
   const old=$('#reply-text')?.value;
-  $('#threadview').innerHTML=h;
+  $(target).innerHTML=h;
   if(old)$('#reply-text').value=old;
   const log=$('#chatlog'); if(log)log.scrollTop=log.scrollHeight;
 }
@@ -844,12 +944,15 @@ async function refresh(){
     $('#budgetbar').style.background=pct>90?'var(--bad)':pct>60?'var(--warn)':'var(--accent)';
     $('#budgettxt').textContent=`money ${m.spent}/${m.limit} spent`;
     const inbox=await api('/inbox');
-    const pc=Object.keys(inbox.pending||{}).length?inbox.pending.length:inbox.pending.length;
+    pendingEntries=inbox.pending||[];
     $('#pcount').hidden=!inbox.pending.length; $('#pcount').textContent=inbox.pending.length;
     $('#pending').innerHTML=inbox.pending.map(e=>decisionCard(e,true)).join('')||'<p class="muted">Nothing waiting for you.</p>';
     $('#recent').innerHTML=inbox.recent.slice().reverse().map(e=>decisionCard(e,false)).join('')||'<p class="muted">No verdicts yet.</p>';
 
+    allThreads=await api('/deliberations');
     const g=await api('/graph'); drawGraph(g);
+    renderAttention();
+    if(graphChat)renderGraphChat();
 
     const kb=await api('/knowledge');
     $('#kbtable').innerHTML='<tr><th>id</th><th>text</th><th>structured</th></tr>'+
@@ -932,7 +1035,7 @@ async function refresh(){
         <td class="muted">${v.estimated?'estimated (size-based)':'reported by adapter'}</td></tr>`).join('')
        ||'<tr><td class="muted" colspan="5">no LLM calls yet</td></tr>');
 
-    const dels=await api('/deliberations');
+    const dels=allThreads;
     const openThreads=dels.filter(t=>t.status==='OPEN');
     $('#dcount').hidden=!openThreads.length; $('#dcount').textContent=openThreads.length;
     renderThreadList(dels);
