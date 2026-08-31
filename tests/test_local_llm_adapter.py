@@ -133,6 +133,35 @@ def test_bearer_header_from_key_but_not_for_local():
     assert "Authorization" not in post2.calls[0]["headers"]
 
 
+@pytest.mark.skipif(importlib.util.find_spec("llmswitch") is None,
+                    reason="needs llmswitch TYPES for the api-family lookup")
+def test_anthropic_provider_routes_through_reference_adapter(monkeypatch):
+    """The registry is the ONLY place providers are chosen: a 'claude' entry
+    must route through the Anthropic reference adapter, not /chat/completions."""
+    class ClaudeRegistry(FakeRegistry):
+        def provider_for(self, consumer):
+            return {"type": "claude", "api_key": "sk-a",
+                    "model": "claude-opus-5", "base_url": ""}
+
+    post = FakePost(json.dumps(VALID))
+    adapter = LocalProviderAdapter(registry=ClaudeRegistry({}), http_post=post)
+    seen = {}
+
+    class FakeAnthropicAdapter:
+        def generate(self, request):
+            seen["request"] = request
+            return dict(VALID)
+
+    monkeypatch.setattr(adapter, "_anthropic_for",
+                        lambda key, base, model:
+                        seen.update(resolved=(key, base, model))
+                        or FakeAnthropicAdapter())
+    out = adapter.generate({"role": "hypotheses", "context": {}})
+    assert out["schema"] == SCHEMA_VERSION
+    assert seen["resolved"] == ("sk-a", "", "claude-opus-5")
+    assert not post.calls          # never hit the OpenAI-dialect path
+
+
 @pytest.mark.skipif(
     os.environ.get("PGDCA_LLMSWITCH_LIVE") != "1"
     or importlib.util.find_spec("llmswitch") is None,

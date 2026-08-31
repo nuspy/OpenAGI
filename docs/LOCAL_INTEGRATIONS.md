@@ -55,9 +55,12 @@ del registro llmswitch, fuori dalle cartelle di progetto):
 | `PGDCA_LLMSWITCH_CARICA` | `1` | `0` = mai caricare modelli in VRAM di propria iniziativa |
 | `PGDCA_LLM_MAX_TOKENS` | `16000` | tetto di completion |
 
-Provider non supportati dall'adapter (errore chiaro): i CLI-agenti
-(nessun endpoint, secondi a risposta), il dialetto Anthropic (usa
-`AnthropicLlmAdapter`) e Cloud Code. Verifica: `pytest
+Il registro llmswitch è **l'unico punto di scelta del provider**: i
+provider Anthropic (tipo `claude`) vengono instradati internamente
+dall'adapter verso il dialetto giusto tramite l'adapter di riferimento
+(serve `pip install -e .[anthropic]`). Non supportati (errore chiaro):
+i CLI-agenti (nessun endpoint, secondi a risposta) e Cloud Code.
+Verifica: `pytest
 tests/test_local_llm_adapter.py` (fake, gira ovunque);
 `PGDCA_LLMSWITCH_LIVE=1` aggiunge la conformance vera contro il registro
 reale. Loop end-to-end dimostrato con LM Studio (`qwen/qwen3.8-27b`).

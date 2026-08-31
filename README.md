@@ -25,15 +25,16 @@ pytest                                 # 151 tests incl. acceptance scenarios + 
 python -m pgdca.bench --seeds 5 --days 6   # PGDCA-Bench: seeded metrics + ablations (M20)
 python -m pgdca.scenario.toy           # scripted CLI demo (injection defense included)
 python -m pgdca.scenario.opportunity   # dynamic reprioritization demo
-python -m pgdca.api.server --db pgdca.db   # persistent backend + web GUI at http://127.0.0.1:8000
-python -m pgdca.api.server --adapter llmswitch   # real local LLM via the llmswitch library (docs/LOCAL_INTEGRATIONS.md)
+python -m pgdca.api.server --db pgdca.db   # backend + web GUI at http://127.0.0.1:8000; uses the
+                                           # llmswitch library when installed (provider choice lives
+                                           # in its registry - GUI tab LLM), the mock adapter otherwise
 ```
 
 Windows one-shot setup and launch:
 
 ```powershell
 .\scripts\install.ps1        # venv + editable install (+ local llmswitch if present)
-.\scripts\run.ps1 -Adapter llmswitch   # server + web GUI (mock|anthropic|llmswitch)
+.\scripts\run.ps1            # server + web GUI; pick the LLM provider in the GUI's LLM tab
 ```
 
 The event store is the single source of truth; the LLM proposes and the controller governs; the Decision Supervisor rules on every significant decision; Tier 1 guardrails are technically non-writable by the system identity; PAUSE/STOP are honored unconditionally; external content is data, never instructions.

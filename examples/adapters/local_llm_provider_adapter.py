@@ -49,13 +49,13 @@ import os
 from pgdca.cognition.anthropic_adapter import SYSTEM_PROMPT, _extract_json
 
 #: llmswitch provider families this adapter cannot drive. CLI providers are
-#: agents (seconds per reply, no completion endpoint); the Anthropic dialect
-#: has its own reference adapter; Cloud Code is not OpenAI-compatible.
+#: agents (seconds per reply, no completion endpoint); Cloud Code is not
+#: OpenAI-compatible. The Anthropic dialect IS supported: it routes through
+#: the reference adapter internally, so the registry stays the single place
+#: where providers are chosen.
 _UNSUPPORTED_API = {
     "cli": "CLI agent providers have no completion endpoint - assign an "
            "HTTP provider to this consumer",
-    "anthropic": "use pgdca.cognition.anthropic_adapter.AnthropicLlmAdapter "
-                 "for Anthropic providers",
     "cloudcode": "Cloud Code is not OpenAI-compatible and rejects "
                  "individual plans (see llmswitch notes)",
 }
@@ -106,27 +106,53 @@ class LocalProviderAdapter:
             import requests  # deferred: llmswitch's own dependency
             http_post = requests.post
         self._post = http_post
+        self._anthropic_cache: dict = {}
 
     # ------------------------------------------------------------- resolve
 
-    def _guard_provider(self, consumer: str) -> None:
-        """Refuse provider families that cannot serve the gateway loop."""
-        prov = self.registry.provider_for(consumer)
-        if not prov:
-            return
+    def _provider_api(self, consumer: str) -> tuple[dict, str]:
+        """(provider record, api family) for a consumer; refuses families
+        that cannot serve the gateway loop."""
+        prov = self.registry.provider_for(consumer) or {}
         try:
             from llmswitch import TYPES
         except ImportError:   # injected registry in tests, no library around
-            return
-        api = (TYPES.get(prov.get("type") or "", {}) or {}).get("api", "")
+            return prov, "openai"
+        api = (TYPES.get(prov.get("type") or "", {}) or {}).get("api",
+                                                                "openai")
         if api in _UNSUPPORTED_API:
             raise RuntimeError(
                 f"llmswitch provider '{prov.get('type')}' for consumer "
                 f"'{consumer}': {_UNSUPPORTED_API[api]}")
+        return prov, api
+
+    def _anthropic_for(self, key: str, base: str, model: str):
+        """Anthropic-dialect providers route through the reference adapter:
+        the registry stays the only place where providers are chosen."""
+        cache_key = (key, base, model)
+        if cache_key not in self._anthropic_cache:
+            try:
+                import anthropic
+            except ImportError:
+                raise RuntimeError(
+                    "provider Anthropic nel registro llmswitch ma SDK "
+                    "assente: pip install -e .[anthropic]")
+            from pgdca.cognition.anthropic_adapter import AnthropicLlmAdapter
+            kwargs: dict = {}
+            if key:
+                kwargs["api_key"] = key
+            if base:
+                # only an EXPLICIT custom base overrides the SDK default
+                # (the registry's chat_base_url already ends in /v1, which
+                # the SDK would double)
+                kwargs["base_url"] = base
+            self._anthropic_cache[cache_key] = AnthropicLlmAdapter(
+                model=model or None, client=anthropic.Anthropic(**kwargs),
+                model_by_role=self.model_by_role)
+        return self._anthropic_cache[cache_key]
 
     def _endpoint(self, role: str) -> tuple[str, dict, str]:
         consumer = self.consumer_by_role.get(role, self.consumer)
-        self._guard_provider(consumer)
         resolved = self.registry.endpoint_for(consumer, carica=self.carica)
         if resolved is None:
             raise RuntimeError(
@@ -147,7 +173,16 @@ class LocalProviderAdapter:
     # ------------------------------------------------------------ generate
 
     def generate(self, request: dict) -> dict:
-        base, headers, model = self._endpoint(str(request.get("role", "")))
+        role = str(request.get("role", ""))
+        consumer = self.consumer_by_role.get(role, self.consumer)
+        prov, api = self._provider_api(consumer)
+        if api == "anthropic":
+            key = (prov.get("api_key") or "").strip()
+            model = self.model_by_role.get(role) or \
+                (prov.get("model") or "").strip()
+            return self._anthropic_for(key, (prov.get("base_url") or "").strip(),
+                                       model).generate(request)
+        base, headers, model = self._endpoint(role)
         payload = {
             "model": model,
             "max_tokens": self.max_tokens,

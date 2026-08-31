@@ -215,14 +215,13 @@
 </main>
 
 <main id="tab-llm">
-  <div class="panel"><h3>Adapter in use <span class="muted">(who does the generative thinking — human-only choice)</span></h3>
+  <div class="panel"><h3>Engine <span class="muted">(the provider is chosen below, in the llmswitch registry)</span></h3>
     <p>Current: <b id="llmadapter">…</b></p>
     <p>
-      <button onclick="switchAdapter('mock')">Mock (deterministic)</button>
-      <button onclick="switchAdapter('llmswitch')" class="primary">llmswitch (local registry)</button>
-      <button onclick="switchAdapter('anthropic')">Anthropic</button>
+      <button onclick="switchAdapter('llmswitch')" class="primary">llmswitch (real providers)</button>
+      <button onclick="switchAdapter('mock')">Mock (deterministic, for tests)</button>
     </p>
-    <p class="muted" style="font-size:12px">Switching applies immediately to the next cognitive call and is logged as a CONFIG_UPDATED event.</p>
+    <p class="muted" style="font-size:12px">Switching applies to the next cognitive call and is logged as a CONFIG_UPDATED event. Every real provider — local engines, API keys, Anthropic, subscriptions — is an entry in the registry below.</p>
   </div>
   <div class="panel" style="margin-top:12px"><h3>llmswitch providers <span class="muted" id="llmregpath"></span></h3>
     <table id="llmproviders"></table>

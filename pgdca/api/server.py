@@ -331,12 +331,6 @@ def create_app(ctrl: Controller) -> FastAPI:
         if kind == "mock":
             from ..cognition.mock_llm import MockLlmAdapter
             adapter = MockLlmAdapter()
-        elif kind == "anthropic":
-            try:
-                from ..cognition.anthropic_adapter import AnthropicLlmAdapter
-                adapter = AnthropicLlmAdapter()
-            except Exception as exc:  # noqa: BLE001 - SDK/credentials missing
-                raise HTTPException(409, f"anthropic adapter unavailable: {exc}")
         elif kind == "llmswitch":
             _registry_or_409()
             try:
@@ -544,13 +538,14 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     parser = argparse.ArgumentParser(description="PGDCA server")
     parser.add_argument("--db", default=":memory:", help="event store path")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--adapter", choices=["mock", "anthropic", "llmswitch"],
-                        default="mock",
-                        help="LLM adapter behind the port (anthropic requires "
-                             "the SDK and credentials; server-side refusal "
-                             "fallbacks are enabled by default; llmswitch "
-                             "requires the local library and a configured "
-                             "registry - docs/LOCAL_INTEGRATIONS.md)")
+    parser.add_argument("--adapter", choices=["auto", "mock", "llmswitch"],
+                        default="auto",
+                        help="auto (default): llmswitch when the library is "
+                             "installed, mock otherwise. The PROVIDER "
+                             "(local engines, API keys, Anthropic, ...) is "
+                             "chosen in the llmswitch registry - GUI tab "
+                             "LLM or docs/LOCAL_INTEGRATIONS.md. mock = "
+                             "deterministic scripted adapter for tests.")
     parser.add_argument("--voice", choices=["none", "callapicall"],
                         default="none",
                         help="voice adapter behind voice.call: callapicall "
@@ -568,15 +563,18 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     args = parser.parse_args()
 
     adapter = None
-    if args.adapter == "anthropic":
-        from ..cognition.anthropic_adapter import AnthropicLlmAdapter
-        adapter = AnthropicLlmAdapter()
-    elif args.adapter == "llmswitch":
-        # local integration: run from the repo root so `examples` resolves
-        from examples.adapters.local_llm_provider_adapter import (
-            LocalProviderAdapter,
-        )
-        adapter = LocalProviderAdapter()
+    if args.adapter in ("auto", "llmswitch"):
+        try:
+            # local integration: run from the repo root so `examples` resolves
+            from examples.adapters.local_llm_provider_adapter import (
+                LocalProviderAdapter,
+            )
+            adapter = LocalProviderAdapter()
+        except ImportError as exc:
+            if args.adapter == "llmswitch":
+                raise SystemExit(f"llmswitch adapter unavailable: {exc}")
+            print(f"[pgdca] llmswitch non disponibile ({exc}): "
+                  "uso l'adapter mock deterministico")
     voice = None
     if args.voice == "callapicall":
         from examples.adapters.call_api_call_adapter import CallAPICallAdapter
@@ -593,7 +591,11 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                                                      "the owner"),
                             enable_mocks=args.mock_ports)
     app = create_app(ctrl)
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    # without a graceful-shutdown cap, Ctrl+C hangs on Windows: the GUI's
+    # open SSE stream (/api/events/stream) never closes by itself and
+    # uvicorn waits for it forever
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning",
+                timeout_graceful_shutdown=3)
 
 
 if __name__ == "__main__":  # pragma: no cover
