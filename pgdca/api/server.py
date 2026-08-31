@@ -147,6 +147,41 @@ def create_app(ctrl: Controller) -> FastAPI:
     def journal(n: int = 30):
         return ctrl.journal.tail(n)
 
+    # -------------------------------- payment 2FA / SCA (code stays yours)
+    @app.get("/api/vault/sca")
+    def vault_sca_list():
+        """Payments waiting for your provider's 2FA code. Only public
+        metadata (merchant, amount, last-4 method) - never the code."""
+        v = connectors.get("vault")
+        pending = getattr(v, "pending_sca", {}) if v else {}
+        return {"pending": [{"challenge_id": c["challenge_id"],
+                             "merchant": c["merchant"], "amount": c["amount"],
+                             "currency": c["currency"],
+                             "purpose": c.get("purpose", "")}
+                            for c in pending.values()]}
+
+    @app.post("/api/vault/sca")
+    def vault_sca_confirm(body: dict = Body(...),
+                          x_actor: str | None = Header(default=None)):
+        """You type the provider's 2FA code here; it goes STRAIGHT to the
+        payment provider and is never stored, logged or shown to the model.
+        Only 'SCA confirmed' (with the tx id, no code) becomes an event."""
+        if _actor(x_actor) != Actor.HUMAN:
+            raise HTTPException(403, "il codice 2FA lo inserisci tu")
+        v = connectors.get("vault")
+        if v is None or not hasattr(v, "confirm_sca"):
+            raise HTTPException(409, "nessun provider di pagamento collegato")
+        challenge_id = str(body.get("challenge_id", ""))
+        code = str(body.get("code", ""))
+        if not challenge_id or not code:
+            raise HTTPException(400, "challenge_id e code obbligatori")
+        r = v.confirm_sca(challenge_id, code)   # code used and dropped here
+        ctrl.runtime.emit(Ev.CONFIG_UPDATED,
+                          {"changes": {"payment_sca": r.status,
+                                       "tx_id": r.tx_id}}, Actor.HUMAN)
+        return {"status": r.status, "tx_id": r.tx_id,
+                "reason": r.metadata.get("reason")}
+
     # ----------------------------------- scheduled verifications (chrono)
     @app.get("/api/followups")
     def followups_list():
@@ -472,8 +507,9 @@ def create_app(ctrl: Controller) -> FastAPI:
     # human. Credentials travel once, are held in memory only, and never
     # come back out of this API.
     connectors: dict = {"voice": None, "email": None, "browser": None,
-                        "mocks": False,
-                        "detail": {"voice": {}, "email": {}, "browser": {}}}
+                        "vault": None, "mocks": False,
+                        "detail": {"voice": {}, "email": {}, "browser": {},
+                                   "vault": {}}}
 
     def _rewire_ports() -> None:
         import os as _os
@@ -482,14 +518,15 @@ def create_app(ctrl: Controller) -> FastAPI:
         register_external_ports(
             ctrl.registry, voice=connectors["voice"],
             email=connectors["email"], browser=connectors["browser"],
+            vault=connectors["vault"],
             principal=_os.environ.get("PGDCA_PRINCIPAL", "the owner"),
             enable_mocks=connectors["mocks"])
 
-    def _init_connectors(voice=None, email=None, browser=None,
+    def _init_connectors(voice=None, email=None, browser=None, vault=None,
                          mocks: bool = False) -> None:
         """Called by main() so the startup flags and the GUI stay one truth."""
         connectors.update(voice=voice, email=email, browser=browser,
-                          mocks=mocks)
+                          vault=vault, mocks=mocks)
 
     app.state.init_connectors = _init_connectors
     # apps built without going through main() still get the connection
@@ -583,6 +620,19 @@ def create_app(ctrl: Controller) -> FastAPI:
                         connectors["browser"].close()
                     connectors["browser"] = None
                     connectors["detail"]["browser"] = {}
+            elif name == "vault":
+                if enabled:
+                    from examples.adapters.vault_payment_adapter import (
+                        VaultPaymentAdapter,
+                    )
+                    connectors["vault"] = VaultPaymentAdapter()
+                    connectors["detail"]["vault"] = {
+                        "provider": type(connectors["vault"].provider).__name__,
+                        "methods": [m.get("label")
+                                    for m in connectors["vault"].payment_methods()]}
+                else:
+                    connectors["vault"] = None
+                    connectors["detail"]["vault"] = {}
             else:
                 raise HTTPException(400, f"unknown connector '{name}'")
         except HTTPException:
@@ -769,6 +819,11 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                              "extract: playwright drives a REAL Chromium "
                              "(pip install playwright && playwright install "
                              "chromium); challenges surface to the human")
+    parser.add_argument("--vault", choices=["none", "sandbox"], default="none",
+                        help="payment adapter behind vault.pay: sandbox is a "
+                             "safe provider that moves NO money but exercises "
+                             "the full flow incl. the 2FA/SCA step (a real "
+                             "provider plugs in via PGDCA_PAY_PROVIDER)")
     parser.add_argument("--mock-ports", action="store_true",
                         help="enable the external ports over their mocks "
                              "(dry-run: voice.call & co. execute without "
@@ -817,6 +872,10 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
             PlaywrightBrowserAdapter,
         )
         browser = PlaywrightBrowserAdapter()
+    vault = None
+    if args.vault == "sandbox":
+        from examples.adapters.vault_payment_adapter import VaultPaymentAdapter
+        vault = VaultPaymentAdapter()
 
     # --------------------------- autonomous setup (self-configuration)
     # the system wires by itself whatever is actually available on this
@@ -855,6 +914,19 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
             print("[pgdca] auto-connect: Playwright installato -> browser "
                   "reale collegato (parte alla prima navigazione)",
                   flush=True)
+        if vault is None:
+            # a real provider needs your keys; the safe sandbox does not, so
+            # the payment FLOW (incl. the 2FA step) is always exercisable
+            from examples.adapters.vault_payment_adapter import (
+                VaultPaymentAdapter,
+            )
+            vault = VaultPaymentAdapter()
+            prov = type(vault.provider).__name__
+            print(f"[pgdca] auto-connect: pagamenti via {prov} "
+                  + ("(SANDBOX: nessun euro mosso; il provider reale si "
+                     "collega con PGDCA_PAY_PROVIDER)"
+                     if prov == "SandboxPaymentProvider" else "(provider reale)"),
+                  flush=True)
     ctrl, _env = create(db_path=args.db, adapter=adapter,
                         build=not args.empty)
     # expose the external-world connection points: DISABLED placeholders by
@@ -863,14 +935,14 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
 
     from ..tools.external import register_external_ports
     register_external_ports(ctrl.registry, voice=voice, email=email,
-                            browser=browser,
+                            browser=browser, vault=vault,
                             principal=os.environ.get("PGDCA_PRINCIPAL",
                                                      "the owner"),
                             enable_mocks=args.mock_ports)
     app = create_app(ctrl)
     # the GUI's Integrations tab reflects and can rewire what the flags set
     app.state.init_connectors(voice=voice, email=email, browser=browser,
-                              mocks=args.mock_ports)
+                              vault=vault, mocks=args.mock_ports)
 
     # ------------------------------------------------ autonomous runner
     # the loop advances by itself; the human supervises. It stands still

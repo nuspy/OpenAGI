@@ -194,9 +194,17 @@ def register_external_ports(registry: ToolRegistry, *,
                        params["authorization_context"])
         except Exception as exc:  # noqa: BLE001
             return ToolResult(status="failed", error=repr(exc))
-        return ToolResult(status="ok" if r.status == "completed" else "failed",
-                          observation={"tx_id": r.tx_id, "status": r.status,
-                                       "amount": r.amount, "currency": r.currency})
+        # pending_sca = the payment provider wants your 2FA code: this is a
+        # normal, successful step, not a failure. The code path lives in the
+        # server (/api/vault/sca) and never touches events or the model.
+        obs = {"tx_id": r.tx_id, "status": r.status,
+               "amount": r.amount, "currency": r.currency}
+        if r.status == "pending_sca":
+            obs["challenge_id"] = r.metadata.get("challenge_id")
+            obs["sca_prompt"] = r.metadata.get("sca_prompt")
+        return ToolResult(
+            status="ok" if r.status in ("completed", "pending_sca") else "failed",
+            observation=obs)
 
     registry.register(_spec("vault.pay", RiskClass.FINANCIAL,
                             "authorized payment through the vault (handles "

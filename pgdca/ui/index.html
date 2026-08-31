@@ -105,6 +105,7 @@
 </nav>
 
 <main id="tab-graph" class="active">
+  <div id="sca-attn"></div>
   <div id="graph-attn"></div>
   <div class="layout">
     <div class="panel" id="svgwrap"><svg id="svg" width="880" height="560"></svg></div>
@@ -258,6 +259,10 @@
         <p><button class="ok" onclick="setConnector('browser',true,{show_window:$('#browserwin').checked})">Connect</button>
            <button onclick="setConnector('browser',false)">Disconnect</button></p>
         <p class="muted" style="font-size:11px">Chromium reale. I CAPTCHA non vengono mai aggirati: arrivano a te.</p></div>
+      <div class="card"><b>💳 Pagamenti — Vault</b> <span class="pill" id="conn-vault">…</span>
+        <p><button class="ok" onclick="setConnector('vault',true)">Connect (sandbox)</button>
+           <button onclick="setConnector('vault',false)">Disconnect</button></p>
+        <p class="muted" style="font-size:11px">Solo handle, mai numeri di carta. Ogni pagamento passa dalla tua approvazione; il codice 2FA lo inserisci tu e non viene mai salvato. Il sandbox non muove denaro; il provider reale (Stripe, ecc.) si collega con PGDCA_PAY_PROVIDER.</p></div>
       <div class="card"><b>🧪 Mock per il resto</b> <span class="pill" id="conn-mocks">…</span>
         <p><button class="ok" onclick="setConnector('mocks',true)">Enable</button>
            <button onclick="setConnector('mocks',false)">Disable</button></p>
@@ -730,6 +735,25 @@ function renderGraphChat(force){
   renderThreadView2(t,'#detail',
     `<p><button onclick="closeGraphChat()">← torna al nodo</button></p>`);
 }
+async function renderSca(){
+  const box=$('#sca-attn'); if(!box)return;
+  let d; try{d=await api('/vault/sca')}catch(_){box.innerHTML='';return}
+  const p=d.pending||[];
+  box.innerHTML=p.length?`<div class="panel" style="margin-bottom:12px;border-color:var(--bad)">
+    <h3>🔐 Codice di verifica del pagamento</h3>`+p.map(c=>`<div class="card pending">
+      Pagamento a <b>${esc(c.merchant)}</b> di <b>${c.amount} ${esc(c.currency)}</b>${c.purpose?' — '+esc(c.purpose):''}.
+      Il tuo provider di pagamento ha inviato un codice al tuo dispositivo: inseriscilo per completare.
+      <p><input id="sca-${esc(c.challenge_id)}" placeholder="codice" style="width:140px" autocomplete="one-time-code">
+         <button class="primary" onclick="confirmSca('${esc(c.challenge_id)}')">Conferma pagamento</button></p>
+      <p class="muted" style="font-size:11px">Il codice va dritto al provider: non viene salvato, registrato né mostrato al modello.</p>
+    </div>`).join('')+`</div>`:'';
+}
+async function confirmSca(cid){
+  const code=($('#sca-'+CSS.escape(cid))?.value||'').trim(); if(!code)return;
+  const r=await post('/vault/sca',{challenge_id:cid,code}).catch(alert);
+  if(r&&r.status!=='completed')alert('Pagamento non riuscito: '+(r.reason||r.status));
+  renderSca();
+}
 function renderAttention(){
   const box=$('#graph-attn'); if(!box)return;
   const parts=[];
@@ -1036,6 +1060,7 @@ async function refresh(){
     allThreads=await api('/deliberations');
     const g=await api('/graph'); drawGraph(g);
     renderAttention();
+    renderSca().catch(()=>{});
     if(graphChat)renderGraphChat();
 
     const kb=await api('/knowledge');
