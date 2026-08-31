@@ -67,5 +67,5 @@ if ($Open) {
 $extra = @("--voice", $Voice)
 if ($MockPorts) { $extra += "--mock-ports" }
 if ($EmptyWorld) { $extra += "--empty" }
-Write-Host "PGDCA su http://127.0.0.1:$Port (adapter: $Adapter, voice: $Voice, db: $DbPath) - Ctrl+C per fermare"
+# il banner leggibile lo stampa il server stesso
 & $venvPy -m pgdca.api.server --adapter $Adapter --db $DbPath --port $Port @extra

@@ -591,6 +591,21 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                                                      "the owner"),
                             enable_mocks=args.mock_ports)
     app = create_app(ctrl)
+    engine = ("llmswitch (provider scelto nel tab LLM della GUI)"
+              if adapter is not None else "mock deterministico (di prova)")
+    ports_state = ("VOCE REALE via CallAPICall" if voice is not None
+                   else "attive sui mock (prova a secco)" if args.mock_ports
+                   else "disattive")
+    print(f"""
+PGDCA avviato.
+  Console web:   http://127.0.0.1:{args.port}   (apri questa pagina)
+  Motore LLM:    {engine}
+  Mondo:         {"vuoto - aggiungi i tuoi goal dal tab Graph"
+                  if args.empty else "scenario di prova (montagna)"}
+  Memoria:       {"usa e getta (:memory:)" if args.db == ":memory:"
+                  else args.db + " (persistente: riprende da dove era)"}
+  Porte esterne: {ports_state}
+Ctrl+C per fermare.""", flush=True)
     # without a graceful-shutdown cap, Ctrl+C hangs on Windows: the GUI's
     # open SSE stream (/api/events/stream) never closes by itself and
     # uvicorn waits for it forever
