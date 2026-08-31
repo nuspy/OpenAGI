@@ -91,17 +91,17 @@
 </header>
 
 <nav id="tabs">
-  <button data-tab="graph" class="active">Graph</button>
-  <button data-tab="inbox">Decision inbox <span id="pcount" class="count" hidden>0</span></button>
-  <button data-tab="world">World inputs <span id="wcount" class="count" hidden>0</span></button>
-  <button data-tab="deliberation">Deliberation <span id="dcount" class="count" hidden>0</span></button>
-  <button data-tab="guardrails">Guardrails</button>
-  <button data-tab="capabilities">Capabilities</button>
-  <button data-tab="llm">Integrations</button>
-  <button data-tab="journal">Journal</button>
-  <button data-tab="policies">Learning</button>
-  <button data-tab="config">Config</button>
-  <button data-tab="events">Events</button>
+  <button data-tab="graph" class="active" title="Il piano: obiettivi, traguardi e tutto ciò che aspetta una tua decisione">Piano</button>
+  <button data-tab="inbox" title="Elenco delle richieste di approvazione, presenti e passate">Approvazioni <span id="pcount" class="count" hidden>0</span></button>
+  <button data-tab="world" title="Le tue regole e le informazioni che dai al sistema">Regole &amp; fatti <span id="wcount" class="count" hidden>0</span></button>
+  <button data-tab="deliberation" title="Le conversazioni con il sistema, in elenco">Discussioni <span id="dcount" class="count" hidden>0</span></button>
+  <button data-tab="guardrails" title="I limiti di sicurezza: cosa il sistema non può fare da solo">Limiti</button>
+  <button data-tab="capabilities" title="Competenze e strumenti importati (skill, server MCP)">Competenze</button>
+  <button data-tab="llm" title="Il modello che pensa e i collegamenti al mondo reale (telefono, email, browser)">Collegamenti</button>
+  <button data-tab="journal" title="Il diario: ogni decisione con perché, esito e verifica a posteriori">Diario</button>
+  <button data-tab="policies" title="Cosa il sistema ha imparato dall'esperienza">Apprendimento</button>
+  <button data-tab="config" title="Impostazioni di funzionamento">Impostazioni</button>
+  <button data-tab="events" title="Il registro tecnico completo (per ispezione)">Eventi</button>
 </nav>
 
 <main id="tab-graph" class="active">
@@ -110,14 +110,19 @@
     <div class="panel" id="svgwrap"><svg id="svg" width="880" height="560"></svg></div>
     <div style="width:340px;flex-shrink:0">
       <div class="panel" id="detail"><h3>Node detail</h3><div class="muted">Click a node to inspect and edit its weights, or open a discussion about it.</div></div>
-      <div class="panel" style="margin-top:12px"><h3>New goal</h3>
+      <div class="panel" style="margin-top:12px"><h3>Aggiungi al piano <span class="muted" title="Quello che aggiungi qui diventa parte del piano: il sistema lavora per realizzarlo e ti coinvolge nelle decisioni.">ⓘ</span></h3>
         <form class="gr" onsubmit="return proposeGoal(event)">
-          <label>Kind <select id="goal-kind"><option>TARGET</option><option>PERSISTENT_GOAL</option><option>META_GOAL</option><option>OBJECTIVE</option></select></label>
-          <label>Label<input id="goal-label" required placeholder="e.g. Learn to climb"></label>
-          <label>Priority<input id="goal-priority" type="number" step="0.05" min="0" max="1" value="0.5"></label>
-          <button class="primary">Propose</button>
+          <label>Tipo <select id="goal-kind">
+            <option value="TARGET" title="Una condizione da raggiungere (es. avere gli scarponi)">Traguardo</option>
+            <option value="PERSISTENT_GOAL" title="Un obiettivo durevole (es. mantenere la dieta)">Obiettivo</option>
+            <option value="OBJECTIVE" title="Un risultato concreto con un orizzonte (es. preparare la gita)">Progetto</option>
+            <option value="META_GOAL" title="Un principio che orienta ogni scelta (es. benessere a lungo termine)">Principio guida</option>
+          </select></label>
+          <label>Descrizione<input id="goal-label" required placeholder="es. Prenotare la cena di sabato"></label>
+          <label>Priorità<input id="goal-priority" type="number" step="0.05" min="0" max="1" value="0.5" title="0 = poco importante, 1 = massima priorità"></label>
+          <button class="primary">Aggiungi</button>
         </form>
-        <p class="muted" style="font-size:12px">Meta/persistent goals appear PROPOSED until you ratify them from the node detail.</p>
+        <p class="muted" style="font-size:12px">Obiettivi e principi restano "proposti" finché non li confermi dal dettaglio del nodo: sei tu a decidere cosa conta.</p>
       </div>
     </div>
   </div>
@@ -322,6 +327,41 @@ try{$('#operator').value=localStorage.getItem('pgdca-operator')||'';
 let selected=null, selectedThread=null, lastSeq=0;
 let pendingEntries=[], allThreads=[];   // per i marcatori sul grafo
 
+/* ---------------- glossario: nomi umani + spiegazioni ----------------
+   La nomenclatura interna (META_GOAL, FACTOR, ...) resta negli eventi e
+   nelle API; qui ogni concetto ha un nome piano e un tooltip. */
+const KINDS={
+  META_GOAL:      {label:'Principio guida', tip:'Un valore di fondo che orienta ogni scelta (es. "benessere a lungo termine"). Non si completa mai: pesa sulle decisioni.'},
+  PERSISTENT_GOAL:{label:'Obiettivo',       tip:'Un obiettivo durevole, attivo finché non lo ritiri (es. "mantenere la dieta", "raggiungere la vetta").'},
+  OBJECTIVE:      {label:'Progetto',        tip:'Un risultato concreto con un orizzonte definito (es. "preparare la gita in montagna").'},
+  TARGET:         {label:'Traguardo',       tip:'Una condizione da raggiungere (es. "avere gli scarponi"). Il sistema lavora per soddisfarla e chiede a te quando serve.'},
+  SUB_TARGET:     {label:'Passo',           tip:'Un passo intermedio nato scomponendo un traguardo, concordato con te in una discussione.'},
+  FACTOR:         {label:'Risorsa necessaria', tip:'Qualcosa che serve a un traguardo (es. scarponi, casco): si cerca, si compra, si verifica.'},
+  RESOURCE:       {label:'Risorsa',         tip:'Una risorsa disponibile o consumabile (es. il budget).'},
+  DIRECTIVE:      {label:'Tua regola',      tip:'Un vincolo o indicazione che imponi tu (es. "non spendere più di 100€", "niente chiamate dopo le 20"). Il sistema non può scavalcarla.'},
+  FACT:           {label:'Informazione',    tip:'Un fatto sul mondo che hai fornito o che è stato raccolto: pesa sul ragionamento.'},
+  POLICY:         {label:'Lezione appresa', tip:'Una regola imparata dall\'esperienza passata (successi ed errori del diario).'},
+  TOOL:           {label:'Strumento',       tip:'Una capacità concreta: comprare, telefonare, mandare email, navigare.'},
+};
+const RISKS={
+  READ_ONLY:             {label:'solo lettura',        tip:'Non cambia niente nel mondo: raccoglie informazioni.'},
+  LOW_IMPACT_WRITE:      {label:'modifica leggera',    tip:'Piccola modifica reversibile.'},
+  EXTERNAL_COMMUNICATION:{label:'contatta l\'esterno', tip:'Parla con terzi (telefono, email, web): parte solo col tuo consenso.'},
+  FINANCIAL:             {label:'spende denaro',       tip:'Muove il budget: sopra la soglia serve la tua approvazione.'},
+  IDENTITY:              {label:'usa la tua identità', tip:'Agisce a tuo nome (login, 2FA): sempre supervisionato.'},
+  IRREVERSIBLE:          {label:'irreversibile',       tip:'Non si può annullare: massima cautela.'},
+};
+const VERDICTS={
+  GRANTED:{label:'autorizzata', tip:'Il supervisore l\'ha lasciata passare da sola.'},
+  DENIED:{label:'negata', tip:'Bloccata dalle regole o da te.'},
+  HUMAN_REQUIRED:{label:'serve il tuo ok', tip:'Le regole di sicurezza chiedono la tua decisione.'},
+  PENDING_HUMAN:{label:'in attesa di te', tip:'Aspetta una tua risposta.'},
+};
+const kindLabel=k=>(KINDS[k]||{}).label||k;
+const kindTip=k=>(KINDS[k]||{}).tip||'';
+const riskPill=r=>`<span class="pill" title="${esc((RISKS[r]||{}).tip||'')}">${esc((RISKS[r]||{}).label||r)}</span>`;
+const verdictPill=v=>`<span class="pill ${v}" title="${esc((VERDICTS[v]||{}).tip||'')}">${esc((VERDICTS[v]||{}).label||v)}</span>`;
+
 // nodi con qualcosa in attesa di te: decisioni pendenti che li toccano,
 // o discussioni aperte (es. la domanda di una decomposizione)
 function pendingMarks(){
@@ -484,7 +524,9 @@ function drawGraph(g){
     t.textContent=(mark+n.label).slice(0,26);
     const t2=document.createElementNS(NS,'text');
     t2.setAttribute('x',x+8);t2.setAttribute('y',y+30);t2.setAttribute('fill','#64748b');t2.setAttribute('font-size','10');
-    t2.textContent=n.kind.toLowerCase()+(n.props.priority!=null?` · pr ${n.props.priority}`:'')+(n.props.importance!=null?` · imp ${n.props.importance}`:'');
+    t2.textContent=kindLabel(n.kind)+(n.props.priority!=null?` · priorità ${n.props.priority}`:'')+(n.props.importance!=null?` · peso ${n.props.importance}`:'');
+    r.appendChild(Object.assign(document.createElementNS(NS,'title'),
+      {textContent:`${n.label}\n${kindLabel(n.kind)}: ${kindTip(n.kind)}`}));
     grp.append(r,t,t2);
     // marcatore "in attesa di te": rosso = decisione da approvare,
     // ambra = discussione aperta (es. domanda di decomposizione)
@@ -536,7 +578,7 @@ async function selectNode(id){
       <button class="primary" onclick="openGraphChat('${t.id}')">Apri la chat</button></div>`;
   });
   html+=`<div class="kv"><span class="muted">id</span><span class="mono">${n.id}</span></div>
-    <div class="kv"><span class="muted">kind</span><span>${n.kind}</span></div>`;
+    <div class="kv"><span class="muted">tipo</span><span title="${esc(kindTip(n.kind))}">${esc(kindLabel(n.kind))} ⓘ</span></div>`;
   editable.forEach(k=>{ if(n.props[k]!==undefined) html+=`<div class="kv"><span>${k}</span><input id="p-${k}" value="${n.props[k]??''}"></div>`; });
   Object.entries(n.props).forEach(([k,v])=>{ if(!editable.includes(k)) html+=`<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`; });
   const edges=g.edges.filter(e=>e.src===id||e.dst===id);
@@ -720,24 +762,23 @@ function decisionCard(e,pending){
                  :Object.keys(d.expected||{}).length?JSON.stringify(d.expected):'';
   return `<div class="card ${pending?'pending':''}">
     <b>${d.action_name}</b> <span class="mono">${JSON.stringify(d.params)}</span><br>
-    <span class="pill ${v.status}">${v.status}</span>
-    <span class="pill">${d.risk_class}</span>
-    ${d.tainted?'<span class="pill DENIED">TAINTED</span>':''}
-    ${(d.derived_from||[]).length?'<span class="pill DENIED">from external content</span>':''}
-    ${d.rationale?`<div style="margin:6px 0"><b>Why:</b> ${esc(d.rationale)}</div>`:''}
-    ${expected?`<div class="muted"><b>Expected:</b> ${esc(expected)}</div>`:''}
+    ${verdictPill(v.status)}
+    ${riskPill(d.risk_class)}
+    ${d.tainted?'<span class="pill DENIED" title="La proposta deriva da contenuti esterni non fidati (es. una pagina web): verificala con attenzione.">⚠ da fonte non fidata</span>':''}
+    ${d.rationale?`<div style="margin:6px 0"><b>Perché:</b> ${esc(d.rationale)}</div>`:''}
+    ${expected?`<div class="muted"><b>Cosa si aspetta:</b> ${esc(expected)}</div>`:''}
     <div class="muted" style="margin:4px 0">
-      <b>p(success):</b> ${Math.round((d.success_prob||0)*100)}%
-      ${d.cost?` · <b>cost:</b> ${d.cost}`:''}
-      ${(d.goal_refs||[]).length?` · <b>serves:</b> ${(d.goal_refs||[]).map(esc).join(', ')}`:''}
+      <b title="Quanto il sistema stima probabile che l'azione riesca">probabilità di riuscita:</b> ${Math.round((d.success_prob||0)*100)}%
+      ${d.cost?` · <b>costo:</b> ${d.cost}`:''}
+      ${(d.goal_refs||[]).length?` · <b title="Gli obiettivi che questa azione serve">per:</b> ${(d.goal_refs||[]).map(esc).join(', ')}`:''}
     </div>
-    <div class="muted" style="margin:6px 0">${(v.reasons||[]).map(esc).join('<br>')||'no guardrail annotations'}</div>
-    ${pending?`<button class="ok" onclick="resolvePending(true)">Approve</button>
-               <button class="danger" onclick="resolvePending(false)">Deny</button>
-               <button onclick="showRationale('${d.id}')">Alternatives & full record</button>`
-             :`<button onclick="override('${v.id}',true)">Force approve</button>
-               <button onclick="override('${v.id}',false)">Revoke</button>
-               <button onclick="showRationale('${d.id}')">Rationale</button>`}
+    <div class="muted" style="margin:6px 0" title="Il motivo per cui le regole di sicurezza hanno chiesto la tua decisione">${(v.reasons||[]).map(esc).join('<br>')||''}</div>
+    ${pending?`<button class="ok" onclick="resolvePending(true)">Approva</button>
+               <button class="danger" onclick="resolvePending(false)">Nega</button>
+               <button onclick="showRationale('${d.id}')" title="Le altre opzioni valutate e perché ha vinto questa">Alternative e dettagli</button>`
+             :`<button onclick="override('${v.id}',true)" title="Autorizza scavalcando il verdetto">Forza approvazione</button>
+               <button onclick="override('${v.id}',false)" title="Revoca: se era eseguita, parte la compensazione dove esiste">Revoca</button>
+               <button onclick="showRationale('${d.id}')">Dettagli</button>`}
   </div>`;
 }
 async function resolvePending(approve){await post('/pending/resolve',{approve,note:'via GUI'}).catch(alert);refresh()}
