@@ -97,7 +97,7 @@
   <button data-tab="deliberation" title="Le conversazioni con il sistema, in elenco">Discussioni <span id="dcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails" title="I limiti di sicurezza: cosa il sistema non può fare da solo">Limiti</button>
   <button data-tab="capabilities" title="Competenze e strumenti importati (skill, server MCP)">Competenze</button>
-  <button data-tab="llm" title="Il modello che pensa e i collegamenti al mondo reale (telefono, email, browser)">Collegamenti</button>
+  <button data-tab="llm" title="Il modello LLM che ragiona (provider) e i collegamenti al mondo reale (telefono, email, browser, pagamenti)">LLM &amp; Collegamenti</button>
   <button data-tab="journal" title="Il diario: ogni decisione con perché, esito e verifica a posteriori">Diario</button>
   <button data-tab="policies" title="Cosa il sistema ha imparato dall'esperienza">Apprendimento</button>
   <button data-tab="config" title="Impostazioni di funzionamento">Impostazioni</button>
@@ -226,61 +226,61 @@
 </main>
 
 <main id="tab-llm">
-  <div class="panel"><h3>Engine <span class="muted">(the provider is chosen below, in the llmswitch registry)</span></h3>
-    <p>Current: <b id="llmadapter">…</b></p>
+  <div class="panel"><h3>🧠 Motore LLM <span class="muted">(il modello che ragiona — il provider si sceglie qui sotto)</span></h3>
+    <p>Attuale: <b id="llmadapter">…</b></p>
     <p>
-      <button onclick="switchAdapter('llmswitch')" class="primary">llmswitch (real providers)</button>
-      <button onclick="switchAdapter('mock')">Mock (deterministic, for tests)</button>
+      <button onclick="switchAdapter('llmswitch')" class="primary">llmswitch (provider reali)</button>
+      <button onclick="switchAdapter('mock')">Mock (deterministico, per test)</button>
     </p>
-    <p class="muted" style="font-size:12px">Switching applies to the next cognitive call and is logged as a CONFIG_UPDATED event. Every real provider — local engines, API keys, Anthropic, subscriptions — is an entry in the registry below.</p>
+    <p class="muted" style="font-size:12px">Il cambio vale dal ciclo successivo ed è registrato come evento. Ogni provider reale — motori locali, chiavi API, Anthropic, abbonamenti — è una voce nel registro qui sotto.</p>
   </div>
-  <div class="panel" style="margin-top:12px"><h3>llmswitch providers <span class="muted" id="llmregpath"></span></h3>
+  <div class="panel" style="margin-top:12px"><h3>Provider LLM <span class="muted" id="llmregpath"></span></h3>
     <table id="llmproviders"></table>
-    <p class="muted" style="font-size:12px">API keys live only in the llmswitch registry file, outside the repo; this page never sees them.</p>
+    <p class="muted" style="font-size:12px">Le chiavi API vivono solo nel file del registro llmswitch, fuori dal repo; questa pagina non le vede mai.</p>
   </div>
-  <div class="panel" style="margin-top:12px"><h3>Connectors <span class="muted">(real-world abilities — wired live, credentials never leave this machine)</span></h3>
+  <div class="grid2" style="margin-top:12px">
+    <div class="panel"><h3>Assegnazioni <span class="muted">(chi usa quale provider)</span></h3>
+      <table id="llmassign"></table>
+      <p class="muted" style="font-size:12px">Di default la chat usa il provider assegnato; ruoli specifici via PGDCA_LLMSWITCH_CONSUMER_BY_ROLE.</p>
+    </div>
+    <div class="panel"><h3>Aggiungi provider</h3>
+      <p><select id="llmnewtype"></select></p>
+      <p><input id="llmnewname" placeholder="nome (facoltativo)" style="width:100%"></p>
+      <p><input id="llmnewbase" placeholder="base_url (facoltativo, per locali/custom)" style="width:100%"></p>
+      <p><input id="llmnewmodel" placeholder="modello (facoltativo)" style="width:100%"></p>
+      <p><input id="llmnewkey" placeholder="chiave API (se richiesta)" type="password" style="width:100%"></p>
+      <p><button class="primary" onclick="addLlmProvider()">Aggiungi</button></p>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:12px"><h3>🔌 Collegamenti al mondo reale <span class="muted">(telefono, email, browser, pagamenti — collegati a caldo, le credenziali non lasciano questo PC)</span></h3>
     <div class="grid2">
-      <div class="card"><b>📞 Voice — CallAPICall</b> <span class="pill" id="conn-voice">…</span>
+      <div class="card"><b>📞 Voce — CallAPICall</b> <span class="pill" id="conn-voice">…</span>
         <p><input id="voiceurl" placeholder="bridge URL (default http://127.0.0.1:8770)" style="width:100%"></p>
         <p><input id="voicetoken" placeholder="control token (se impostato)" type="password" style="width:100%"></p>
-        <p><button class="ok" onclick="setConnector('voice',true,{base_url:$('#voiceurl').value,token:$('#voicetoken').value})">Connect</button>
-           <button onclick="setConnector('voice',false)">Disconnect</button></p>
+        <p><button class="ok" onclick="setConnector('voice',true,{base_url:$('#voiceurl').value,token:$('#voicetoken').value})">Collega</button>
+           <button onclick="setConnector('voice',false)">Scollega</button></p>
         <p class="muted" style="font-size:11px">Chiamate vere via modem GSM/Android. Ogni chiamata resta gated: approvi tu, disclosure AI sempre per prima.</p></div>
       <div class="card"><b>✉️ Email — SMTP/IMAP</b> <span class="pill" id="conn-email">…</span>
         <p><input id="emailaddr" placeholder="indirizzo (es. nome@gmail.com)" style="width:100%"></p>
         <p><input id="emailpass" placeholder="app password (Gmail: Sicurezza → Password per le app)" type="password" style="width:100%"></p>
         <p><input id="emailsmtp" placeholder="SMTP host (default smtp.gmail.com)" style="width:49%">
            <input id="emailimap" placeholder="IMAP host (default imap.gmail.com)" style="width:49%"></p>
-        <p><button class="ok" onclick="setConnector('email',true,{address:$('#emailaddr').value,password:$('#emailpass').value,smtp_host:$('#emailsmtp').value,imap_host:$('#emailimap').value});$('#emailpass').value=''">Connect</button>
-           <button onclick="setConnector('email',false)">Disconnect</button></p>
+        <p><button class="ok" onclick="setConnector('email',true,{address:$('#emailaddr').value,password:$('#emailpass').value,smtp_host:$('#emailsmtp').value,imap_host:$('#emailimap').value});$('#emailpass').value=''">Collega</button>
+           <button onclick="setConnector('email',false)">Scollega</button></p>
         <p class="muted" style="font-size:11px">La password resta in memoria sul tuo PC, mai su disco né in questa pagina. Invio con firma "per conto di" obbligatoria; la posta letta è dato non fidato.</p></div>
       <div class="card"><b>🌐 Browser — Playwright</b> <span class="pill" id="conn-browser">…</span>
         <p><label><input type="checkbox" id="browserwin"> mostra la finestra del browser</label></p>
-        <p><button class="ok" onclick="setConnector('browser',true,{show_window:$('#browserwin').checked})">Connect</button>
-           <button onclick="setConnector('browser',false)">Disconnect</button></p>
+        <p><button class="ok" onclick="setConnector('browser',true,{show_window:$('#browserwin').checked})">Collega</button>
+           <button onclick="setConnector('browser',false)">Scollega</button></p>
         <p class="muted" style="font-size:11px">Chromium reale. I CAPTCHA non vengono mai aggirati: arrivano a te.</p></div>
       <div class="card"><b>💳 Pagamenti — Vault</b> <span class="pill" id="conn-vault">…</span>
-        <p><button class="ok" onclick="setConnector('vault',true)">Connect (sandbox)</button>
-           <button onclick="setConnector('vault',false)">Disconnect</button></p>
+        <p><button class="ok" onclick="setConnector('vault',true)">Collega (sandbox)</button>
+           <button onclick="setConnector('vault',false)">Scollega</button></p>
         <p class="muted" style="font-size:11px">Solo handle, mai numeri di carta. Ogni pagamento passa dalla tua approvazione; il codice 2FA lo inserisci tu e non viene mai salvato. Il sandbox non muove denaro; il provider reale (Stripe, ecc.) si collega con PGDCA_PAY_PROVIDER.</p></div>
       <div class="card"><b>🧪 Mock per il resto</b> <span class="pill" id="conn-mocks">…</span>
-        <p><button class="ok" onclick="setConnector('mocks',true)">Enable</button>
-           <button onclick="setConnector('mocks',false)">Disable</button></p>
-        <p class="muted" style="font-size:11px">Le porte non collegate (SMS, pagamenti, …) rispondono finte: vedi il flusso completo senza toccare il mondo reale.</p></div>
-    </div>
-  </div>
-  <div class="grid2" style="margin-top:12px">
-    <div class="panel"><h3>Assignments <span class="muted">(consumer → provider)</span></h3>
-      <table id="llmassign"></table>
-      <p class="muted" style="font-size:12px">The adapter resolves <i>chat</i> by default; role-specific consumers via PGDCA_LLMSWITCH_CONSUMER_BY_ROLE (M13).</p>
-    </div>
-    <div class="panel"><h3>Add provider</h3>
-      <p><select id="llmnewtype"></select></p>
-      <p><input id="llmnewname" placeholder="name (optional)" style="width:100%"></p>
-      <p><input id="llmnewbase" placeholder="base_url (optional, per i locali/custom)" style="width:100%"></p>
-      <p><input id="llmnewmodel" placeholder="model (optional)" style="width:100%"></p>
-      <p><input id="llmnewkey" placeholder="api_key (se richiesta)" type="password" style="width:100%"></p>
-      <p><button class="primary" onclick="addLlmProvider()">Add</button></p>
+        <p><button class="ok" onclick="setConnector('mocks',true)">Attiva</button>
+           <button onclick="setConnector('mocks',false)">Disattiva</button></p>
+        <p class="muted" style="font-size:11px">Le porte non collegate (SMS, ecc.) rispondono finte: vedi il flusso completo senza toccare il mondo reale.</p></div>
     </div>
   </div>
 </main>
