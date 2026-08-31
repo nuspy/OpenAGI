@@ -51,6 +51,11 @@ def create_app(ctrl: Controller) -> FastAPI:
             raise HTTPException(404, str(exc))
         except ValueError as exc:
             raise HTTPException(409, str(exc))
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the GUI must get JSON,
+            # never a bare 500 page it cannot parse
+            raise HTTPException(502, f"{type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------- reads
     @app.get("/api/state")

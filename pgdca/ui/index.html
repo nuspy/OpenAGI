@@ -59,10 +59,13 @@
   form.gr input,form.gr select,form.gr textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:6px;margin:2px 0 8px;font:13px system-ui}
   #events{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
   #events div{padding:2px 0;border-bottom:1px dashed var(--line)}
-  .msg{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:6px 0;background:#f8fafc}
-  .msg.human{background:#eef2ff;border-color:#c7d2fe}
-  .msg.system{background:#f0fdf4;border-color:#bbf7d0}
+  .msg{border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0;background:#f8fafc;max-width:82%}
+  .msg.human{background:#eef2ff;border-color:#c7d2fe;margin-left:auto;border-bottom-right-radius:4px}
+  .msg.system{background:#f0fdf4;border-color:#bbf7d0;margin-right:auto;border-bottom-left-radius:4px}
   .msg .author{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .chatlog{max-height:52vh;overflow-y:auto;padding:4px 2px;display:flex;flex-direction:column}
+  .chatbar{display:flex;gap:8px;margin-top:8px}
+  .chatbar textarea{flex:1;min-height:44px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font:14px/1.4 system-ui}
   tr.sel td{background:#eef2ff}
   #threadview input{border:1px solid var(--line);border-radius:6px;padding:6px;font:13px system-ui}
 </style>
@@ -517,21 +520,30 @@ async function nodeHistory(id){
   $('#dlgbody').innerHTML=html; dlg.showModal();
 }
 
-/* ---------------- deliberation ---------------- */
-async function openThread(kind,id){
-  const q=prompt('Question for the system about '+kind+' '+id,'why?');
-  if(q===null)return;
-  const th=await post('/deliberations',{subject_kind:kind,subject_id:id,question:q}).catch(e=>{alert(e);return null});
-  if(!th)return;
-  selectedThread=th.id;
+/* ---------------- deliberation (chat) ---------------- */
+let draftThread=null;   // {kind,id}: chat aperta, thread creato al 1° invio
+function openThread(kind,id){
+  draftThread={kind,id}; selectedThread=null;
   if(dlg.open)dlg.close();
   showTab('deliberation'); refresh();
 }
-function viewThread(id){selectedThread=id;refresh()}
-async function replyThread(id){
-  const t=$('#reply-text').value.trim(); if(!t)return;
-  await post('/deliberations/'+id+'/reply',{text:t}).catch(alert); refresh();
+function viewThread(id){draftThread=null;selectedThread=id;refresh()}
+async function sendChat(){
+  const box=$('#reply-text'); const t=(box?.value||'').trim(); if(!t)return;
+  box.disabled=true;
+  try{
+    if(selectedThread){
+      await post('/deliberations/'+selectedThread+'/reply',{text:t});
+    }else if(draftThread){
+      const th=await post('/deliberations',
+        {subject_kind:draftThread.kind,subject_id:draftThread.id,question:t});
+      selectedThread=th.id; draftThread=null;
+    }
+    box.value='';
+  }catch(e){alert(e)}
+  refresh();
 }
+function chatKey(ev){ if(ev.key==='Enter'&&!ev.shiftKey){ev.preventDefault();sendChat();} }
 async function resolveThread(id,outcome){
   const note=prompt('Note for the resolution ('+outcome+')','')??'';
   await post('/deliberations/'+id+'/resolve',{outcome,note}).catch(alert); refresh();
@@ -553,30 +565,52 @@ function renderThreadList(ths){
       <td><button onclick="viewThread('${t.id}')">Open</button></td></tr>`).join('')
      ||'<tr><td class="muted" colspan="5">no discussions yet</td></tr>');
 }
+const CHATBAR=`<div class="chatbar">
+    <textarea id="reply-text" placeholder="Scrivi qui… (Invio per mandare, Shift+Invio a capo)" onkeydown="chatKey(event)"></textarea>
+    <button class="primary" style="align-self:flex-end" onclick="sendChat()">Invia</button></div>`;
+let lastThreadRender='';
 function renderThreadView(t){
+  // il polling non deve ridisegnare la chat mentre scrivi (perderesti
+  // focus e testo) ne' quando non e' cambiato niente
+  const sig=JSON.stringify([t&&t.id,t&&t.messages&&t.messages.length,
+                            t&&t.status,draftThread]);
+  if(document.activeElement===$('#reply-text')&&sig===lastThreadRender)return;
+  if(sig===lastThreadRender&&$('#reply-text'))return;
+  lastThreadRender=sig;
+  return renderThreadView2(t);
+}
+function renderThreadView2(t){
+  if(!t&&draftThread){
+    $('#threadview').innerHTML=`<h3>Nuova discussione — ${esc(draftThread.kind)} <span class="mono">${esc(draftThread.id)}</span></h3>
+      <div class="chatlog"><div class="msg system"><div class="author">system</div>
+      <div>Chiedimi qualsiasi cosa su questo soggetto: perché l'ho proposto, le alternative, i rischi. Il primo messaggio apre la discussione.</div></div></div>`+CHATBAR;
+    $('#reply-text')?.focus();
+    return;
+  }
   if(!t){$('#threadview').innerHTML='<p class="muted">Select a thread.</p>';return}
   let h=`<h3>${t.id} — ${t.subject.kind} <span class="mono">${t.subject.id}</span>
     <span class="pill ${t.status==='OPEN'?'PENDING_HUMAN':'ACTIVE'}">${t.status}</span>
     <span class="muted">opened by ${t.opened_by}, cycle ${t.cycle??'–'}</span></h3>`;
-  h+=t.messages.map(m=>`<div class="msg ${m.author}"><div class="author">${m.author}</div>
+  h+='<div class="chatlog" id="chatlog">'+t.messages.map(m=>`<div class="msg ${m.author}"><div class="author">${m.author}</div>
       <div>${esc(m.text)}</div>
-      ${m.packet?`<pre>${esc(JSON.stringify(m.packet,null,1))}</pre>`:''}
+      ${m.packet?`<details><summary class="muted" style="font-size:11px">dettagli proposta</summary><pre>${esc(JSON.stringify(m.packet,null,1))}</pre></details>`:''}
       ${(m.suggestions||[]).map(s=>`<div class="card">suggested edit: <span class="mono">${esc(JSON.stringify(s.params))}</span><br>
         <span class="muted">${esc(s.rationale||'')}</span>
         ${t.status==='OPEN'?`<br><button class="ok" onclick='applySuggestion("${t.id}",${JSON.stringify(JSON.stringify(s.params))})'>Apply &amp; resolve as modified</button>`:''}</div>`).join('')}
-    </div>`).join('');
+    </div>`).join('')+'</div>';
   if(t.status==='OPEN'){
-    h+=`<p><input id="reply-text" placeholder="Reply to the system…" style="width:62%">
-        <button onclick="replyThread('${t.id}')">Reply</button></p>
-      <p><button class="ok" onclick="resolveThread('${t.id}','confirmed')">Confirm</button>
+    h+=CHATBAR;
+    h+=`<p style="margin-top:8px"><button class="ok" onclick="resolveThread('${t.id}','confirmed')">Confirm</button>
          <button class="danger" onclick="resolveThread('${t.id}','cancelled')">Cancel / revoke subject</button></p>
-      <p class="muted" style="font-size:12px">Cancelling a pending decision denies it; an executed one is revoked and compensated when a
-      compensation tool exists; an active strategy is deferred for replan. Outcomes are events and feed future advisories.</p>`;
+      <p class="muted" style="font-size:12px">Confermare applica quanto proposto nel thread (es. i sotto-obiettivi di una decomposizione). Annullare nega/revoca il soggetto. Ogni esito è un evento.</p>`;
   }else{
     h+=`<p class="muted">Resolved: <b>${t.resolution.outcome}</b> ${esc(t.resolution.note||'')}
         ${(t.resolution.effects||[]).length?`· effects <span class="mono">${esc(JSON.stringify(t.resolution.effects))}</span>`:''}</p>`;
   }
+  const old=$('#reply-text')?.value;
   $('#threadview').innerHTML=h;
+  if(old)$('#reply-text').value=old;
+  const log=$('#chatlog'); if(log)log.scrollTop=log.scrollHeight;
 }
 
 /* ---------------- inbox ---------------- */

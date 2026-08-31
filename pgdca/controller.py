@@ -113,6 +113,10 @@ class Controller:
         self.exogenous = ExogenousManager(runtime, self.graph, self.gateway,
                                           self.deliberation, self.reviewer,
                                           self.budgets, self.config)
+        from .decomposition import DecompositionEngine
+        self.decomposition = DecompositionEngine(
+            runtime, self.gateway, self.graph, self.deliberation,
+            self.config, budgets=self.budgets)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -436,9 +440,22 @@ class Controller:
                     self.human_edit_node(node_id, props, actor)
                     effects.append({"type": "node_edited", "node_id": node_id,
                                     "props": props})
+        # decomposition threads: confirming/modifying weaves the agreed
+        # breakdown (optionally one answered branch) into the graph
+        packet = (th["messages"][0].get("packet") or {}) if th["messages"] else {}
+        if (packet.get("checkpoint") == "decomposition"
+                and outcome in ("confirmed", "modified")):
+            proposal = packet.get("proposal") or {}
+            branch = ""
+            if isinstance(changes, dict):
+                if isinstance(changes.get("proposal"), dict):
+                    proposal = {**proposal, **changes["proposal"]}
+                branch = str(changes.get("branch", "")
+                             or (changes.get("proposal") or {}).get("branch", ""))
+            effects += self.decomposition.apply(proposal, actor, branch=branch)
+
         # integration threads (M31): confirming/modifying weaves the
         # exogenous node per the (possibly edited) proposal
-        packet = (th["messages"][0].get("packet") or {}) if th["messages"] else {}
         if (packet.get("checkpoint") == "integration"
                 and outcome in ("confirmed", "modified")):
             proposal = packet.get("proposal") or {}
@@ -533,6 +550,11 @@ class Controller:
         self._check_control()
         self._reconcile()
         self._check_control()
+
+        # autonomous decomposition: an unfed target gets a breakdown
+        # proposal + owner questions BEFORE the idle check - a bare human
+        # target in an empty world must grow, not sit inert
+        self.decomposition.step()
 
         context = self._build_context()
         open_targets = self.graph.open_targets()

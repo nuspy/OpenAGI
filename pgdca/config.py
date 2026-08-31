@@ -85,6 +85,10 @@ class Config:
     exogenous_auto_weave_below: float = 0.0    # below this weight, edges self-apply as HYPOTHESIZED
     consultation_interval_cycles: int = 0      # 0 = off; else a periodic sync thread opens
 
+    # --- autonomous target decomposition (human-consensus weave) ---
+    decomposition_enabled: bool = True         # unfed targets get a breakdown proposal
+    decomposition_max_per_cycle: int = 1       # LLM cost control
+
     # --- capability-acquisition sandbox (M10) ---
     sandbox_cpu_seconds: int = 10
     sandbox_memory_bytes: int = 512 * 1024 * 1024

@@ -106,14 +106,17 @@ class DeliberationEngine:
         self._answer(tid, question, evidence)
         return self.projection.threads[tid]
 
-    def open_system(self, reason: str, packet: dict) -> dict:
+    def open_system(self, reason: str, packet: dict,
+                    subject: dict | None = None) -> dict:
         """An escalation packet becomes a discussion thread: the system
         states its blocker and waits; no generative call is needed - the
-        packet is the message (replay stays LLM-free on this path)."""
+        packet is the message (replay stays LLM-free on this path).
+        `subject` pins the thread to a concrete subject (e.g. the node a
+        decomposition is about) so replies get that subject's evidence."""
         tid = self.runtime.next_id("del")
         thread = {
             "id": tid,
-            "subject": {"kind": "escalation", "id": tid},
+            "subject": subject or {"kind": "escalation", "id": tid},
             "status": "OPEN", "opened_by": Actor.SYSTEM.value,
             "cycle": self.runtime.cycle,
             "messages": [{"author": Actor.SYSTEM.value,
@@ -146,18 +149,26 @@ class DeliberationEngine:
 
     def _answer(self, thread_id: str, question: str, evidence: dict) -> None:
         th = self.projection.threads[thread_id]
-        resp = self.gateway.ask("deliberate", {
-            "subject": th["subject"],
-            "question": question,
-            "evidence": evidence,
-            "history": th["messages"][-self.config.deliberation_history_window:],
-        })
-        message = {"author": Actor.SYSTEM.value, "text": resp.summary}
-        suggestions = [{"params": h.params, "rationale": h.rationale}
-                       for h in resp.hypotheses
-                       if h.action_name == "suggest_edit"]
-        if suggestions:
-            message["suggestions"] = suggestions
+        try:
+            resp = self.gateway.ask("deliberate", {
+                "subject": th["subject"],
+                "question": question,
+                "evidence": evidence,
+                "history": th["messages"][-self.config.deliberation_history_window:],
+            })
+            message = {"author": Actor.SYSTEM.value, "text": resp.summary}
+            suggestions = [{"params": h.params, "rationale": h.rationale}
+                           for h in resp.hypotheses
+                           if h.action_name == "suggest_edit"]
+            if suggestions:
+                message["suggestions"] = suggestions
+        except Exception as exc:  # noqa: BLE001 - a failed generation must
+            # not kill the thread: the human's message is already recorded,
+            # the failure becomes an honest system turn instead of a 500
+            message = {"author": Actor.SYSTEM.value,
+                       "text": "(non riesco a generare una risposta ora: "
+                               f"{exc}. Riprova, o rispondi di nuovo.)",
+                       "error": True}
         self.runtime.emit(Ev.DELIBERATION_MESSAGE,
                           {"thread_id": thread_id, "message": message},
                           Actor.SYSTEM)
