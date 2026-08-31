@@ -82,12 +82,12 @@
   </div>
   <span style="flex:1"></span>
   <input id="operator" placeholder="operator name" title="stamped into your decisions' notes" style="width:120px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:13px system-ui">
-  <button class="primary" onclick="step(1)">Step</button>
-  <button onclick="step(5)">Run ×5</button>
-  <button onclick="control('pause')">Pause</button>
-  <button onclick="control('resume')">Resume</button>
-  <button class="danger" onclick="control('stop')">STOP</button>
-  <button onclick="injectAdvert()" title="demo: ingest adversarial external content">Inject advert</button>
+  <button class="primary" onclick="step(1)" title="Un ciclo completo di ragionamento: osserva la situazione, propone azioni, le valuta, esegue (o ti chiede l'ok)">Avanza</button>
+  <button onclick="step(5)" title="Cinque cicli di seguito: si ferma comunque a ogni decisione che richiede te">Avanza ×5</button>
+  <button onclick="control('pause')" title="Sospende il lavoro: nessuna nuova azione finché non riprendi">Pausa</button>
+  <button onclick="control('resume')" title="Riprende il lavoro sospeso">Riprendi</button>
+  <button class="danger" onclick="control('stop')" title="Arresto totale e incondizionato: viene sempre rispettato">STOP</button>
+  <button onclick="injectAdvert()" title="Demo della difesa: inietta una pubblicità ostile ('ignora il budget!') e osserva come viene trattata da non-fidata">Demo: contenuto ostile</button>
 </header>
 
 <nav id="tabs">
@@ -590,9 +590,21 @@ async function selectNode(id){
        <button onclick="nodeHistory('${id}')">Decision history</button>
        ${n.status==='PROPOSED'&&['META_GOAL','PERSISTENT_GOAL'].includes(n.kind)
          ?`<button class="ok" onclick="ratifyGoal('${id}')">Ratify</button>`:''}</p>
-    <p class="muted" style="font-size:12px">Manual edits become HUMAN_EDIT events in the journal.</p>
+    <p class="muted" style="font-size:12px">Le modifiche manuali diventano eventi firmati da te nel diario.</p>
+    <h3 style="margin-top:12px" title="Promemoria con scadenza reale: alla data giusta il sistema apre una domanda per te (es. 'sono arrivati gli scarponi?'). Rispondi in chat: chiudi, rimandi o intervieni.">🕒 Verifiche programmate</h3>
+    <div id="nodefu" class="muted">…</div>
+    <p><input id="fu-q" placeholder="cosa verificare? (es. sono arrivati gli scarponi?)" style="width:100%"></p>
+    <p>tra <input id="fu-days" type="number" min="0.1" step="0.5" value="5" style="width:70px"> giorni
+       <button class="primary" onclick="scheduleFollowup('${id}')">Programma</button></p>
     <div id="nodehist"><p class="muted">carico la storia…</p></div>`;
   $('#detail').innerHTML=html;
+  api('/followups').then(fs=>{
+    const box=$('#nodefu'); if(!box)return;
+    const mine=fs.filter(f=>f.node_id===id&&f.status!=='cancelled');
+    box.innerHTML=mine.map(f=>`<div class="kv"><span>${esc(f.question)}</span>
+      <span>${f.status==='scheduled'?'entro '+esc((f.due_at||'').slice(0,10)):f.status==='asked'?'⚠ in attesa di risposta':'✓ '+esc(f.status)}</span></div>`).join('')
+      ||'nessuna verifica su questo nodo';
+  }).catch(()=>{});
   // storia decisioni inline (ultime 5), con accesso al razionale completo
   api('/nodes/'+id+'/decisions').then(d=>{
     const box=$('#nodehist'); if(!box)return;
@@ -614,6 +626,12 @@ async function proposeGoal(ev){
   refresh(); return false;
 }
 async function ratifyGoal(id){await post('/goals/'+id+'/ratify').catch(alert);selectNode(id);refresh()}
+async function scheduleFollowup(nodeId){
+  const q=$('#fu-q').value.trim(); if(!q){alert('scrivi cosa verificare');return}
+  await post('/followups',{question:q,due_in_days:+$('#fu-days').value||1,
+                           node_id:nodeId}).catch(alert);
+  selectNode(nodeId);
+}
 
 async function saveNode(id){
   const props={};
@@ -773,11 +791,11 @@ function decisionCard(e,pending){
       ${(d.goal_refs||[]).length?` · <b title="Gli obiettivi che questa azione serve">per:</b> ${(d.goal_refs||[]).map(esc).join(', ')}`:''}
     </div>
     <div class="muted" style="margin:6px 0" title="Il motivo per cui le regole di sicurezza hanno chiesto la tua decisione">${(v.reasons||[]).map(esc).join('<br>')||''}</div>
-    ${pending?`<button class="ok" onclick="resolvePending(true)">Approva</button>
-               <button class="danger" onclick="resolvePending(false)">Nega</button>
+    ${pending?`<button class="ok" onclick="resolvePending(true)" title="Decidi tu: il sistema propone, le regole filtrano, l'ultima parola è la tua">Approva</button>
+               <button class="danger" onclick="resolvePending(false)" title="La proposta viene scartata e non verrà riproposta">Nega</button>
                <button onclick="showRationale('${d.id}')" title="Le altre opzioni valutate e perché ha vinto questa">Alternative e dettagli</button>`
-             :`<button onclick="override('${v.id}',true)" title="Autorizza scavalcando il verdetto">Forza approvazione</button>
-               <button onclick="override('${v.id}',false)" title="Revoca: se era eseguita, parte la compensazione dove esiste">Revoca</button>
+             :`${v.status==='DENIED'?`<button onclick="override('${v.id}',true)" title="Era stata bloccata dalle regole automatiche: tu puoi comunque autorizzarla (resta tracciato)">Autorizza comunque</button>`:''}
+               ${v.status!=='DENIED'?`<button onclick="override('${v.id}',false)" title="Ci hai ripensato: la revochi; se era già eseguita parte la compensazione dove esiste">Revoca</button>`:''}
                <button onclick="showRationale('${d.id}')">Dettagli</button>`}
   </div>`;
 }
@@ -787,24 +805,35 @@ async function override(id,approve){await post('/verdicts/'+id+'/override',{appr
 /* ---------------- journal / policies ---------------- */
 function renderRationale(p){
   return `<div class="card"><b>${p.what.action}</b> <span class="mono">${JSON.stringify(p.what.params)}</span>
-    <div class="muted">${p.why||''}</div>
-    <div><b>Alternatives:</b> ${(p.alternatives_considered||[]).map(a=>`${a.action_name}(${a.params.factor_id??''}) U=${a.utility}`).join(' · ')}</div>
-    ${(p.conflicts||[]).length?`<div style="color:var(--bad)"><b>Conflicts:</b> ${p.conflicts.map(c=>c.factor+' harms '+(c.harms||[]).join(',')).join('; ')}</div>`:''}
-    <div><b>Verdict:</b> ${p.verdict?`<span class="pill ${p.verdict.status}">${p.verdict.status}</span> ${(p.verdict.reasons||[]).join('; ')}`:'—'}
-    ${p.override?` → override: <span class="pill ${p.override.effective}">${p.override.effective}</span>`:''}</div>
-    <div><b>Outcome:</b> ${p.what_happened.execution?p.what_happened.execution.status:'not executed'}
-    ${p.audit?` · decision quality <b>${p.audit.decision_quality}</b> vs outcome quality <b>${p.audit.outcome_quality}</b>`:''}</div>
-    ${p.counterfactual?`<div class="muted"><b>Counterfactual (estimate):</b> best alternative was
+    <div id="explain-${p.decision_id}" style="margin:6px 0"><button class="primary" onclick="explainDecision('${p.decision_id}')" title="Il modello rilegge questo record e te lo racconta in italiano semplice">🗣 Spiegamelo in parole semplici</button></div>
+    <div class="muted"><b>Perché:</b> ${esc(p.why||'—')}</div>
+    <div title="U = utilità: contributo agli obiettivi meno costo, rischio e costo-opportunità. Più alta = più conveniente."><b>Alternative valutate:</b> ${(p.alternatives_considered||[]).map(a=>`${a.action_name}(${a.params.factor_id??''}) <span class="muted">utilità ${a.utility}</span>`).join(' · ')||'—'}</div>
+    ${(p.conflicts||[]).length?`<div style="color:var(--bad)"><b>Conflitti:</b> ${p.conflicts.map(c=>c.factor+' danneggia '+(c.harms||[]).join(',')).join('; ')}</div>`:''}
+    <div><b>Verdetto di sicurezza:</b> ${p.verdict?`${verdictPill(p.verdict.status)} ${(p.verdict.reasons||[]).map(esc).join('; ')}`:'—'}
+    ${p.override?` → tua decisione: ${verdictPill(p.override.effective)}`:''}</div>
+    <div title="Qualità della decisione = quanto era sensata con le informazioni di allora. Qualità dell'esito = come è andata. Possono divergere: sfortuna non è errore."><b>Esito:</b> ${p.what_happened.execution?p.what_happened.execution.status:'non eseguita'}
+    ${p.audit?` · decisione sensata al <b>${Math.round(p.audit.decision_quality*100)}%</b>, esito riuscito al <b>${Math.round(p.audit.outcome_quality*100)}%</b>`:''}</div>
+    ${p.counterfactual?`<div class="muted" title="Analisi a posteriori: cosa sarebbe successo scegliendo diversamente. Il rimpianto misura quanto si è perso rispetto alla migliore alternativa."><b>Col senno di poi:</b> la migliore alternativa era
       ${p.counterfactual.best_alternative.action_name}(${p.counterfactual.best_alternative.factor_id??''})
-      U=${p.counterfactual.best_alternative.ex_ante_utility} · regret ${p.counterfactual.regret}
-      · ${p.counterfactual.avoidable?'<span style="color:var(--bad)">avoidable</span>':'not avoidable (bad luck, not bad judgment)'}</div>`:''}
-    ${p.compensation?`<div><b>Compensated:</b> ${JSON.stringify(p.compensation.result)}</div>`:''}
+      <span class="muted">(utilità ${p.counterfactual.best_alternative.ex_ante_utility})</span> · rimpianto ${p.counterfactual.regret}
+      · ${p.counterfactual.avoidable?'<span style="color:var(--bad)">errore evitabile: se ne terrà conto</span>':'sfortuna, non errore: la decisione era sensata'}</div>`:''}
+    ${p.compensation?`<div><b>Compensata:</b> ${JSON.stringify(p.compensation.result)}</div>`:''}
     ${(p.reviews||[]).map(r=>`<div class="muted"><b>Cross-AI review</b> (${r.checkpoint}):
       <span class="pill ${r.outcome==='consensus'?'ACTIVE':r.outcome==='withdrawn'?'DEFERRED':'PENDING_HUMAN'}">${r.outcome}</span>
       ${r.rounds} round(s)${(r.standing_objections||[]).length?` · standing: ${r.standing_objections.map(o=>o.reason).join('; ')}`:''}
       ${(r.agreed_points||[]).length?` · agreed: ${r.agreed_points.join('; ')}`:''}</div>`).join('')}
-    <p style="margin:6px 0 0"><button onclick="openThread('decision','${p.decision_id}')">Discuss this decision</button></p>
+    <p style="margin:6px 0 0"><button onclick="openThread('decision','${p.decision_id}')" title="Apri una chat sul contesto di questa decisione">Discutine con il sistema</button></p>
   </div>`;
+}
+async function explainDecision(id){
+  const box=$('#explain-'+CSS.escape(id)); if(!box)return;
+  box.innerHTML='<span class="muted">il modello sta rileggendo il record…</span>';
+  try{
+    const r=await post('/journal/'+id+'/explain');
+    box.innerHTML=`<div class="msg system"><div class="author">spiegazione</div><div>${esc(r.text)}</div></div>`;
+  }catch(e){
+    box.innerHTML=`<span class="muted">spiegazione non disponibile (${esc(String(e))})</span>`;
+  }
 }
 async function showRationale(id){
   const p=await api('/journal/'+id).catch(()=>null);

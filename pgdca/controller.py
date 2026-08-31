@@ -117,6 +117,10 @@ class Controller:
         self.decomposition = DecompositionEngine(
             runtime, self.gateway, self.graph, self.deliberation,
             self.config, budgets=self.budgets)
+        from .followups import FollowupEngine, FollowupProjection
+        self.followup_store = runtime.register(FollowupProjection())
+        self.followups = FollowupEngine(runtime, self.followup_store,
+                                        self.deliberation, self.graph)
         self._cycle_step_ref: tuple[str, dict] | None = None
 
         self.state = SysState.INITIALIZING
@@ -454,6 +458,23 @@ class Controller:
                              or (changes.get("proposal") or {}).get("branch", ""))
             effects += self.decomposition.apply(proposal, actor, branch=branch)
 
+        # follow-up threads: confirmed = verified & closed, modified with
+        # snooze_days postpones, cancelled drops the verification
+        if packet.get("checkpoint") == "followup":
+            fid = packet.get("followup_id", "")
+            if outcome == "modified" and isinstance(changes, dict) \
+                    and changes.get("snooze_days") is not None:
+                f = self.followups.snooze(fid, float(changes["snooze_days"]),
+                                          actor)
+                effects.append({"type": "followup_snoozed", "id": fid,
+                                "due_at": f["due_at"]})
+            elif outcome == "confirmed":
+                self.followups.resolve(fid, "done", actor)
+                effects.append({"type": "followup_done", "id": fid})
+            elif outcome == "cancelled":
+                self.followups.resolve(fid, "cancelled", actor)
+                effects.append({"type": "followup_cancelled", "id": fid})
+
         # integration threads (M31): confirming/modifying weaves the
         # exogenous node per the (possibly edited) proposal
         if (packet.get("checkpoint") == "integration"
@@ -555,6 +576,8 @@ class Controller:
         # proposal + owner questions BEFORE the idle check - a bare human
         # target in an empty world must grow, not sit inert
         self.decomposition.step()
+        # scheduled verifications: due follow-ups become consensus threads
+        self.followups.check()
 
         context = self._build_context()
         open_targets = self.graph.open_targets()

@@ -36,6 +36,10 @@ class Ev(str, Enum):
     CONTROL_COMMAND = "CONTROL_COMMAND"
     STATE_CHANGED = "STATE_CHANGED"
     CONFIG_UPDATED = "CONFIG_UPDATED"
+    # scheduled verifications (real-time follow-ups: "did the boots arrive?")
+    FOLLOWUP_SCHEDULED = "FOLLOWUP_SCHEDULED"
+    FOLLOWUP_TRIGGERED = "FOLLOWUP_TRIGGERED"
+    FOLLOWUP_RESOLVED = "FOLLOWUP_RESOLVED"
     # cognition
     LLM_REQUEST = "LLM_REQUEST"
     LLM_RESPONSE = "LLM_RESPONSE"

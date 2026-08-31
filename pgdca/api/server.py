@@ -130,6 +130,52 @@ def create_app(ctrl: Controller) -> FastAPI:
     def journal(n: int = 30):
         return ctrl.journal.tail(n)
 
+    # ----------------------------------- scheduled verifications (chrono)
+    @app.get("/api/followups")
+    def followups_list():
+        return ctrl.followup_store.snapshot()
+
+    @app.post("/api/followups")
+    def followup_schedule(body: dict = Body(...),
+                          x_actor: str | None = Header(default=None)):
+        _require_human(x_actor)
+        return guard(lambda: ctrl.followups.schedule(
+            str(body.get("question", "")),
+            float(body.get("due_in_days", 1)),
+            str(body.get("node_id", "")), Actor.HUMAN))
+
+    @app.post("/api/journal/{decision_id}/explain")
+    def explain_decision(decision_id: str):
+        """LLM re-elaboration of a decision record for humans: the record
+        stays deterministic, the wording is generative (same doctrine as
+        deliberation answers)."""
+        r = ctrl.journal.rationale(decision_id)
+        if r is None:
+            raise HTTPException(404, decision_id)
+        field_guide = {
+            "U/utility": "punteggio con cui le opzioni sono state ordinate: "
+                         "contributo agli obiettivi meno costo, rischio e "
+                         "costo-opportunità",
+            "success_prob": "probabilità di riuscita stimata dal modello, "
+                            "calibrata sull'esperienza passata",
+            "decision_quality vs outcome_quality":
+                "quanto era BUONA la decisione con le informazioni di allora "
+                "vs come è ANDATA: possono divergere (sfortuna != errore)",
+            "regret": "quanto si sarebbe guadagnato col senno di poi "
+                      "scegliendo la migliore alternativa",
+            "tainted": "la proposta deriva da contenuti esterni non fidati",
+            "verdict": "l'esito del controllo di sicurezza automatico; "
+                       "HUMAN_REQUIRED = serviva l'ok del proprietario",
+        }
+        resp = guard(lambda: ctrl.gateway.ask("explain", {
+            "record": r, "field_guide": field_guide,
+            "instruction": "spiega questa decisione al proprietario in "
+                           "italiano semplice (5-8 frasi): cosa si è deciso "
+                           "e perché, contro quali alternative, cosa è "
+                           "successo davvero, e la lezione del senno di poi. "
+                           "Traduci i numeri in significato, zero gergo."}))
+        return {"text": resp.summary}
+
     @app.get("/api/journal/{decision_id}")
     def rationale(decision_id: str):
         r = ctrl.journal.rationale(decision_id)
