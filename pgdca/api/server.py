@@ -65,6 +65,9 @@ def create_app(ctrl: Controller) -> FastAPI:
             "pending_verdict": pend["verdict"] if pend else None,
             "open_targets": [t["id"] for t in ctrl.graph.open_targets()],
             "last_seq": ctrl.runtime.store.last_seq(),
+            # shown in the GUI header: judging canned mock output as "the
+            # system's reasoning" is a real misunderstanding to prevent
+            "llm_adapter": type(ctrl.gateway.adapter).__name__,
         }
 
     @app.get("/api/graph")
@@ -396,6 +399,135 @@ def create_app(ctrl: Controller) -> FastAPI:
             str(body.get("consumer", "")), body.get("provider_id") or None))
         return {"assignments": assignments}
 
+    # ------------------------- external connectors (GUI tab Integrations)
+    # live adapters behind the external ports; (re)wired at runtime by the
+    # human. Credentials travel once, are held in memory only, and never
+    # come back out of this API.
+    connectors: dict = {"voice": None, "email": None, "browser": None,
+                        "mocks": False,
+                        "detail": {"voice": {}, "email": {}, "browser": {}}}
+
+    def _rewire_ports() -> None:
+        import os as _os
+
+        from ..tools.external import register_external_ports
+        register_external_ports(
+            ctrl.registry, voice=connectors["voice"],
+            email=connectors["email"], browser=connectors["browser"],
+            principal=_os.environ.get("PGDCA_PRINCIPAL", "the owner"),
+            enable_mocks=connectors["mocks"])
+
+    def _init_connectors(voice=None, email=None, browser=None,
+                         mocks: bool = False) -> None:
+        """Called by main() so the startup flags and the GUI stay one truth."""
+        connectors.update(voice=voice, email=email, browser=browser,
+                          mocks=mocks)
+
+    app.state.init_connectors = _init_connectors
+    # apps built without going through main() still get the connection
+    # points (disabled placeholders) so the Integrations tab works
+    if "voice.call" not in ctrl.registry.names(enabled_only=False):
+        _rewire_ports()
+
+    @app.get("/api/connectors")
+    def connectors_state():
+        out = {}
+        for name, tool in (("voice", "voice.call"), ("email", "email.send"),
+                           ("sms", "sms.send"), ("browser", "browser.navigate"),
+                           ("vault", "vault.pay"),
+                           ("identity", "identity.auth_session")):
+            try:
+                spec = ctrl.registry.spec(tool)
+            except KeyError:
+                continue
+            adapter = connectors.get(name)
+            out[name] = {
+                "tool": tool,
+                "mode": ("real" if adapter is not None
+                         else "mock" if spec.enabled else "disabled"),
+                "adapter": type(adapter).__name__ if adapter else None,
+                "detail": connectors["detail"].get(name, {}),
+            }
+        return {"connectors": out, "mocks": connectors["mocks"],
+                "available": {"voice": "CallAPICall bridge (:8770)",
+                              "email": "SMTP/IMAP",
+                              "browser": "Playwright/Chromium",
+                              "sms": "non ancora implementato",
+                              "vault": "non ancora implementato",
+                              "identity": "non ancora implementato"}}
+
+    @app.post("/api/connectors")
+    def connectors_set(body: dict = Body(...),
+                       x_actor: str | None = Header(default=None)):
+        """(Re)wire a connector: {"name": "voice|email|browser|mocks",
+        "enabled": bool, "config": {...}}. Human-only; hot-swapped."""
+        _require_human(x_actor)
+        name = str(body.get("name", ""))
+        enabled = bool(body.get("enabled"))
+        cfg = body.get("config") or {}
+        try:
+            if name == "mocks":
+                connectors["mocks"] = enabled
+            elif name == "voice":
+                if enabled:
+                    from examples.adapters.call_api_call_adapter import (
+                        CallAPICallAdapter,
+                    )
+                    connectors["voice"] = CallAPICallAdapter(
+                        base_url=cfg.get("base_url") or None,
+                        token=cfg.get("token") or None)
+                    connectors["detail"]["voice"] = {
+                        "base_url": connectors["voice"].base_url}
+                else:
+                    connectors["voice"] = None
+                    connectors["detail"]["voice"] = {}
+            elif name == "email":
+                if enabled:
+                    from examples.adapters.email_smtp_imap_adapter import (
+                        SmtpImapEmailAdapter,
+                    )
+                    connectors["email"] = SmtpImapEmailAdapter(
+                        address=cfg.get("address") or None,
+                        password=cfg.get("password") or None,
+                        smtp_host=cfg.get("smtp_host") or None,
+                        imap_host=cfg.get("imap_host") or None)
+                    connectors["detail"]["email"] = {
+                        "address": connectors["email"].address,
+                        "smtp_host": connectors["email"].smtp_host,
+                        "imap_host": connectors["email"].imap_host}
+                else:
+                    connectors["email"] = None
+                    connectors["detail"]["email"] = {}
+            elif name == "browser":
+                if enabled:
+                    from examples.adapters.playwright_browser_adapter import (
+                        PlaywrightBrowserAdapter,
+                    )
+                    old = connectors["browser"]
+                    if old is not None:
+                        old.close()
+                    connectors["browser"] = PlaywrightBrowserAdapter(
+                        headless=not cfg.get("show_window", False))
+                    connectors["detail"]["browser"] = {
+                        "headless": connectors["browser"].headless}
+                else:
+                    if connectors["browser"] is not None:
+                        connectors["browser"].close()
+                    connectors["browser"] = None
+                    connectors["detail"]["browser"] = {}
+            else:
+                raise HTTPException(400, f"unknown connector '{name}'")
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - misconfig is a 409, not a 500
+            raise HTTPException(409, str(exc))
+        _rewire_ports()
+        ctrl.runtime.emit(Ev.CONFIG_UPDATED,
+                          {"changes": {f"connector_{name}":
+                                       "on" if enabled else "off"}},
+                          Actor.HUMAN)
+        return connectors_state()
+
     # -------------------------------------------- exogenous inputs (M31)
     @app.get("/api/exogenous")
     def exogenous():
@@ -553,6 +685,16 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
                              "CallAPICall bridge (:8770) - the Supervisor "
                              "still gates every call as "
                              "EXTERNAL_COMMUNICATION")
+    parser.add_argument("--email", choices=["none", "smtp"], default="none",
+                        help="email adapter behind email.send/fetch: smtp "
+                             "sends REAL email via SMTP/IMAP (configure "
+                             "PGDCA_EMAIL_ADDRESS / PGDCA_EMAIL_PASSWORD)")
+    parser.add_argument("--browser", choices=["none", "playwright"],
+                        default="none",
+                        help="browser adapter behind browser.navigate/"
+                             "extract: playwright drives a REAL Chromium "
+                             "(pip install playwright && playwright install "
+                             "chromium); challenges surface to the human")
     parser.add_argument("--mock-ports", action="store_true",
                         help="enable the external ports over their mocks "
                              "(dry-run: voice.call & co. execute without "
@@ -579,6 +721,18 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     if args.voice == "callapicall":
         from examples.adapters.call_api_call_adapter import CallAPICallAdapter
         voice = CallAPICallAdapter()
+    email = None
+    if args.email == "smtp":
+        from examples.adapters.email_smtp_imap_adapter import (
+            SmtpImapEmailAdapter,
+        )
+        email = SmtpImapEmailAdapter()   # raises with clear text if unset
+    browser = None
+    if args.browser == "playwright":
+        from examples.adapters.playwright_browser_adapter import (
+            PlaywrightBrowserAdapter,
+        )
+        browser = PlaywrightBrowserAdapter()
     ctrl, _env = create(db_path=args.db, adapter=adapter,
                         build=not args.empty)
     # expose the external-world connection points: DISABLED placeholders by
@@ -586,14 +740,22 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     import os
 
     from ..tools.external import register_external_ports
-    register_external_ports(ctrl.registry, voice=voice,
+    register_external_ports(ctrl.registry, voice=voice, email=email,
+                            browser=browser,
                             principal=os.environ.get("PGDCA_PRINCIPAL",
                                                      "the owner"),
                             enable_mocks=args.mock_ports)
     app = create_app(ctrl)
+    # the GUI's Integrations tab reflects and can rewire what the flags set
+    app.state.init_connectors(voice=voice, email=email, browser=browser,
+                              mocks=args.mock_ports)
     engine = ("llmswitch (provider scelto nel tab LLM della GUI)"
               if adapter is not None else "mock deterministico (di prova)")
-    ports_state = ("VOCE REALE via CallAPICall" if voice is not None
+    real = [n for n, a in (("voce/CallAPICall", voice), ("email/SMTP", email),
+                           ("browser/Playwright", browser)) if a is not None]
+    ports_state = ("REALI: " + ", ".join(real)
+                   + ("; il resto sui mock" if args.mock_ports
+                      else "; il resto disattivo") if real
                    else "attive sui mock (prova a secco)" if args.mock_ports
                    else "disattive")
     print(f"""

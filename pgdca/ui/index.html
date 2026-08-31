@@ -72,6 +72,7 @@
   <h1>PGDCA <span class="muted">Console</span></h1>
   <span id="state" class="badge">…</span>
   <span class="muted">cycle <b id="cycle">0</b></span>
+  <span class="muted" id="enginebadge" title="chi genera le proposte — si cambia nel tab LLM" style="border:1px solid var(--line);border-radius:999px;padding:2px 10px"></span>
   <div class="budget">
     <div class="bar"><i id="budgetbar" style="width:0%"></i></div>
     <small id="budgettxt">budget —</small>
@@ -93,7 +94,7 @@
   <button data-tab="deliberation">Deliberation <span id="dcount" class="count" hidden>0</span></button>
   <button data-tab="guardrails">Guardrails</button>
   <button data-tab="capabilities">Capabilities</button>
-  <button data-tab="llm">LLM</button>
+  <button data-tab="llm">Integrations</button>
   <button data-tab="journal">Journal</button>
   <button data-tab="policies">Learning</button>
   <button data-tab="config">Config</button>
@@ -227,6 +228,33 @@
     <table id="llmproviders"></table>
     <p class="muted" style="font-size:12px">API keys live only in the llmswitch registry file, outside the repo; this page never sees them.</p>
   </div>
+  <div class="panel" style="margin-top:12px"><h3>Connectors <span class="muted">(real-world abilities — wired live, credentials never leave this machine)</span></h3>
+    <div class="grid2">
+      <div class="card"><b>📞 Voice — CallAPICall</b> <span class="pill" id="conn-voice">…</span>
+        <p><input id="voiceurl" placeholder="bridge URL (default http://127.0.0.1:8770)" style="width:100%"></p>
+        <p><input id="voicetoken" placeholder="control token (se impostato)" type="password" style="width:100%"></p>
+        <p><button class="ok" onclick="setConnector('voice',true,{base_url:$('#voiceurl').value,token:$('#voicetoken').value})">Connect</button>
+           <button onclick="setConnector('voice',false)">Disconnect</button></p>
+        <p class="muted" style="font-size:11px">Chiamate vere via modem GSM/Android. Ogni chiamata resta gated: approvi tu, disclosure AI sempre per prima.</p></div>
+      <div class="card"><b>✉️ Email — SMTP/IMAP</b> <span class="pill" id="conn-email">…</span>
+        <p><input id="emailaddr" placeholder="indirizzo (es. nome@gmail.com)" style="width:100%"></p>
+        <p><input id="emailpass" placeholder="app password (Gmail: Sicurezza → Password per le app)" type="password" style="width:100%"></p>
+        <p><input id="emailsmtp" placeholder="SMTP host (default smtp.gmail.com)" style="width:49%">
+           <input id="emailimap" placeholder="IMAP host (default imap.gmail.com)" style="width:49%"></p>
+        <p><button class="ok" onclick="setConnector('email',true,{address:$('#emailaddr').value,password:$('#emailpass').value,smtp_host:$('#emailsmtp').value,imap_host:$('#emailimap').value});$('#emailpass').value=''">Connect</button>
+           <button onclick="setConnector('email',false)">Disconnect</button></p>
+        <p class="muted" style="font-size:11px">La password resta in memoria sul tuo PC, mai su disco né in questa pagina. Invio con firma "per conto di" obbligatoria; la posta letta è dato non fidato.</p></div>
+      <div class="card"><b>🌐 Browser — Playwright</b> <span class="pill" id="conn-browser">…</span>
+        <p><label><input type="checkbox" id="browserwin"> mostra la finestra del browser</label></p>
+        <p><button class="ok" onclick="setConnector('browser',true,{show_window:$('#browserwin').checked})">Connect</button>
+           <button onclick="setConnector('browser',false)">Disconnect</button></p>
+        <p class="muted" style="font-size:11px">Chromium reale. I CAPTCHA non vengono mai aggirati: arrivano a te.</p></div>
+      <div class="card"><b>🧪 Mock per il resto</b> <span class="pill" id="conn-mocks">…</span>
+        <p><button class="ok" onclick="setConnector('mocks',true)">Enable</button>
+           <button onclick="setConnector('mocks',false)">Disable</button></p>
+        <p class="muted" style="font-size:11px">Le porte non collegate (SMS, pagamenti, …) rispondono finte: vedi il flusso completo senza toccare il mondo reale.</p></div>
+    </div>
+  </div>
   <div class="grid2" style="margin-top:12px">
     <div class="panel"><h3>Assignments <span class="muted">(consumer → provider)</span></h3>
       <table id="llmassign"></table>
@@ -294,7 +322,23 @@ function showTab(name){
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('main').forEach(m=>m.classList.toggle('active',m.id==='tab-'+name));
   if(name==='config'){api('/config').then(renderConfig).catch(()=>{});renderFeatureSettings().catch(()=>{});}
-  if(name==='llm'){loadLlm().catch(()=>{});}
+  if(name==='llm'){loadLlm().catch(()=>{});loadConnectors().catch(()=>{});}
+}
+
+/* ---------------- connectors (Integrations) ---------------- */
+async function loadConnectors(){
+  const d=await api('/connectors');
+  for(const [name,c] of Object.entries(d.connectors||{})){
+    const el=$('#conn-'+name); if(!el)continue;
+    el.textContent=c.mode==='real'?'CONNECTED':c.mode==='mock'?'mock':'off';
+    el.className='pill '+(c.mode==='real'?'GRANTED':c.mode==='mock'?'HUMAN_REQUIRED':'DENIED');
+  }
+  const m=$('#conn-mocks');
+  if(m){m.textContent=d.mocks?'ON':'OFF';m.className='pill '+(d.mocks?'GRANTED':'DENIED');}
+}
+async function setConnector(name,enabled,config){
+  await post('/connectors',{name,enabled,config:config||{}}).catch(alert);
+  loadConnectors();
 }
 
 /* ---------------- LLM provider selection (llmswitch) ---------------- */
@@ -756,6 +800,10 @@ async function refresh(){
     const s=await api('/state');
     $('#state').textContent=s.state; $('#state').className='badge '+s.state;
     $('#cycle').textContent=s.cycle;
+    const eng=s.llm_adapter||'';
+    const badge=$('#enginebadge');
+    if(badge){badge.textContent=eng==='MockLlmAdapter'?'engine: MOCK (frasi di prova!)':eng==='LocalProviderAdapter'?'engine: llmswitch':eng?('engine: '+eng):'';
+              badge.style.color=eng==='MockLlmAdapter'?'var(--bad)':'var(--muted)';}
     const m=s.budgets.money||{limit:0,spent:0};
     const pct=m.limit?Math.min(100,100*m.spent/m.limit):0;
     $('#budgetbar').style.width=pct+'%';

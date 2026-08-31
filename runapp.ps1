@@ -20,7 +20,7 @@ Add-Type -AssemblyName System.Drawing
 # --- finestra ----------------------------------------------------------------
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "PGDCA — Avvio"
-$form.Size = New-Object System.Drawing.Size(560, 560)
+$form.Size = New-Object System.Drawing.Size(560, 600)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -50,14 +50,21 @@ $rWorldToy   = Add-Radio "Scenario di prova (montagna): guarda il sistema lavora
 $rWorldEmpty = Add-Radio "Mondo vuoto: i goal li metti tu dalla GUI" 0 26 500
 $grpWorld.Controls.AddRange(@($rWorldToy, $rWorldEmpty)); $form.Controls.Add($grpWorld); $y += 62
 
-Add-Label "Porte verso il mondo esterno (telefono, email, ...)" 16 $y 500 $true | Out-Null; $y += 24
+Add-Label "Porte verso il mondo esterno (combinabili)" 16 $y 500 $true | Out-Null; $y += 24
 $grpPorts = New-Object System.Windows.Forms.Panel
 $grpPorts.Location = New-Object System.Drawing.Point(16, $y)
-$grpPorts.Size = New-Object System.Drawing.Size(510, 78)
-$rPortsOff  = Add-Radio "Disattive (solo il mercato di prova)" 0 0 500 $true
-$rPortsMock = Add-Radio "Finte (mock): l'agente le usa, il mondo reale non viene toccato" 0 26 500
-$rPortsReal = Add-Radio "Voce REALE via CallAPICall (:8770): le chiamate approvate squillano davvero" 0 52 500
-$grpPorts.Controls.AddRange(@($rPortsOff, $rPortsMock, $rPortsReal)); $form.Controls.Add($grpPorts); $y += 88
+$grpPorts.Size = New-Object System.Drawing.Size(510, 104)
+function Add-Check([string]$text, [int]$yy, [bool]$checked = $false) {
+    $c = New-Object System.Windows.Forms.CheckBox
+    $c.Text = $text; $c.Location = New-Object System.Drawing.Point(0, $yy)
+    $c.Size = New-Object System.Drawing.Size(505, 24); $c.Checked = $checked
+    $grpPorts.Controls.Add($c); return $c
+}
+$cbMock    = Add-Check "Le porte non collegate rispondono FINTE (mock, prova a secco)" 0
+$cbVoice   = Add-Check "Voce REALE via CallAPICall (:8770): le chiamate approvate squillano davvero" 26
+$cbEmail   = Add-Check "Email REALE via SMTP/IMAP (servono PGDCA_EMAIL_ADDRESS e PGDCA_EMAIL_PASSWORD)" 52
+$cbBrowserA = Add-Check "Browser REALE (Playwright/Chromium): naviga pagine vere, CAPTCHA -> a te" 78
+$form.Controls.Add($grpPorts); $y += 114
 
 Add-Label "Memoria (event store)" 16 $y 250 $true | Out-Null; $y += 24
 $tDb = New-Object System.Windows.Forms.TextBox
@@ -135,8 +142,10 @@ $btnStart.Add_Click({
     $args = @("-m", "pgdca.api.server", "--port", "$port",
               "--db", $(if ($cbTemp.Checked) { ":memory:" } else { $tDb.Text.Trim() }))
     if ($rWorldEmpty.Checked) { $args += "--empty" }
-    if ($rPortsMock.Checked)  { $args += "--mock-ports" }
-    if ($rPortsReal.Checked)  { $args += @("--voice", "callapicall") }
+    if ($cbMock.Checked)      { $args += "--mock-ports" }
+    if ($cbVoice.Checked)     { $args += @("--voice", "callapicall") }
+    if ($cbEmail.Checked)     { $args += @("--email", "smtp") }
+    if ($cbBrowserA.Checked)  { $args += @("--browser", "playwright") }
     # console visibile: i log si vedono e Ctrl+C ferma il server
     Start-Process -FilePath $venvPy -ArgumentList $args -WorkingDirectory $repo | Out-Null
     $status.Text = "Avviato su http://127.0.0.1:$port ..."

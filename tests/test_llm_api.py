@@ -65,6 +65,28 @@ def test_provider_crud_assign_and_no_secret_leak(client):
     assert d["providers"] == [] and d["assignments"] == {}
 
 
+def test_connectors_wire_and_unwire_at_runtime(client, monkeypatch):
+    c, ctrl = client
+    monkeypatch.setenv("PGDCA_EMAIL_ADDRESS", "me@example.test")
+    monkeypatch.setenv("PGDCA_EMAIL_PASSWORD", "app-pass")
+    d = c.get("/api/connectors").json()
+    assert d["connectors"]["email"]["mode"] == "disabled"
+    assert c.post("/api/connectors", json={"name": "email", "enabled": True},
+                  headers={"X-Actor": "system"}).status_code == 403
+    r = c.post("/api/connectors", json={"name": "email", "enabled": True},
+               headers={"X-Actor": "human"})
+    assert r.status_code == 200
+    assert r.json()["connectors"]["email"]["mode"] == "real"
+    assert ctrl.registry.spec("email.send").enabled is True
+    assert "app-pass" not in r.text            # credentials never come back
+    r = c.post("/api/connectors", json={"name": "mocks", "enabled": True},
+               headers={"X-Actor": "human"})
+    assert r.json()["connectors"]["voice"]["mode"] == "mock"
+    r = c.post("/api/connectors", json={"name": "email", "enabled": False},
+               headers={"X-Actor": "human"})
+    assert r.json()["connectors"]["email"]["mode"] == "mock"  # mocks still on
+
+
 def test_adapter_switch_is_human_only_and_audited(client):
     c, ctrl = client
     r = c.post("/api/llm/adapter", json={"type": "llmswitch"},
