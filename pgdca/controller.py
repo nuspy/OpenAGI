@@ -127,7 +127,10 @@ class Controller:
         self.cycle = 0
         self._stop = False
         self._paused = False
-        self._pending: dict | None = None       # {"decision": ProposedDecision, "verdict": dict}
+        # decision_id -> {"decision": ProposedDecision, "verdict": dict}.
+        # More than one decision can await the human at once: only the
+        # touched tasks block, the loop keeps working on everything else.
+        self._pending: dict[str, dict] = {}
         self._denied_signatures: set = set()
         self._conflicts_emitted: set = set()
 
@@ -203,15 +206,15 @@ class Controller:
         self.runtime.cycle = last_cycle or None
         if hasattr(self.runtime.clock, "advance"):
             self.runtime.clock.advance(len(events))
-        # pending human decision survives via the inbox projection
-        if self.inbox.pending:
-            vid, entry = sorted(self.inbox.pending.items())[-1]
+        # pending human decisions survive via the inbox projection
+        for vid, entry in sorted(self.inbox.pending.items()):
             d = entry["decision"]
             decision = ProposedDecision(**{k: d[k] for k in (
                 "kind", "action_name", "params", "cost", "risk_class", "goal_refs",
                 "derived_from", "tainted", "expected", "success_prob",
                 "rationale", "id")})
-            self._pending = {"decision": decision, "verdict": entry["verdict"]}
+            self._pending[decision.id] = {"decision": decision,
+                                          "verdict": entry["verdict"]}
         # control state: last STOP/PAUSE without a later RESUME persists
         if last_control == "STOP":
             self._stop = True
@@ -219,7 +222,7 @@ class Controller:
         elif last_control == "PAUSE":
             self._paused = True
             self.state = SysState.PAUSED
-        elif self._pending is not None:
+        elif self._pending:
             self.state = SysState.WAITING_HUMAN
         else:
             self.state = SysState.IDLE
@@ -315,21 +318,28 @@ class Controller:
 
     # ---------------------------------------------------- human decisions
     def pending_decision(self) -> dict | None:
-        return self._pending
+        """Oldest pending entry (compat); the inbox lists them all."""
+        return next(iter(self._pending.values()), None)
 
-    def resolve_pending(self, approve: bool, note: str = "") -> CycleResult | None:
-        """Human decision on a HUMAN_REQUIRED verdict (decision inbox)."""
-        if self._pending is None:
+    def resolve_pending(self, approve: bool, note: str = "",
+                        decision_id: str | None = None) -> CycleResult | None:
+        """Human decision on a HUMAN_REQUIRED verdict (decision inbox).
+        `decision_id` picks one of several pending decisions; default is
+        the oldest. Only that task was blocked - the rest never stopped."""
+        if not self._pending:
             return None
-        decision: ProposedDecision = self._pending["decision"]
-        verdict = self._pending["verdict"]
+        did = decision_id or next(iter(self._pending))
+        entry = self._pending.pop(did)     # KeyError -> 404 upstream
+        decision: ProposedDecision = entry["decision"]
+        verdict = entry["verdict"]
         self.supervisor.override(verdict["id"], Actor.HUMAN, approve, note)
-        self._pending = None
         if not approve:
             self._denied_signatures.add(self._signature(decision))
             self.runtime.emit(Ev.HYPOTHESIS_PRUNED,
                               {"decision_id": decision.id, "reason": "human denial"},
                               Actor.HUMAN)
+            # IDLE even with other decisions pending: the next cycle works
+            # what is not blocked and re-detects a full block on its own
             self._set_state(SysState.IDLE)
             return CycleResult(self.cycle, "denied", decision.id)
         self._check_control()
@@ -345,10 +355,11 @@ class Controller:
                       if e["verdict"]["id"] == verdict_id), None)
         if entry is None:
             raise KeyError(verdict_id)
-        if (self._pending is not None
-                and self._pending["verdict"]["id"] == verdict_id):
-            res = self.resolve_pending(approve, note)
-            return {"resolved_pending": True, "result": res.status if res else None}
+        for did, e in self._pending.items():
+            if e["verdict"]["id"] == verdict_id:
+                res = self.resolve_pending(approve, note, decision_id=did)
+                return {"resolved_pending": True,
+                        "result": res.status if res else None}
         self.supervisor.override(verdict_id, Actor.HUMAN, approve, note)
         rec = self.journal.records.get(entry["verdict"]["decision_id"], {})
         executed = bool(rec.get("execution"))
@@ -488,9 +499,9 @@ class Controller:
             effects.append({"type": "integration_applied", **applied})
         if outcome == "cancelled" and subject["kind"] == "decision":
             rec = self.journal.records.get(subject["id"])
-            if (self._pending is not None
-                    and self._pending["decision"].id == subject["id"]):
-                self.resolve_pending(False, note or "cancelled in deliberation")
+            if subject["id"] in self._pending:
+                self.resolve_pending(False, note or "cancelled in deliberation",
+                                     decision_id=subject["id"])
                 effects.append({"type": "pending_denied"})
             elif rec and rec.get("execution") and rec.get("verdict"):
                 out = self.override_verdict(rec["verdict"]["id"], approve=False,
@@ -549,10 +560,9 @@ class Controller:
             return CycleResult(self.cycle, "stopped")
         if self._paused:
             return CycleResult(self.cycle, "paused")
-        if self._pending is not None:
-            self._set_state(SysState.WAITING_HUMAN)
-            return CycleResult(self.cycle, "waiting_human",
-                               self._pending["decision"].id)
+        # NB: pending decisions do NOT halt the loop - only the tasks they
+        # touch are blocked (filtered inside the cycle); everything else
+        # keeps moving. A full block is detected in the cycle itself.
 
         self.cycle += 1
         self.runtime.cycle = self.cycle
@@ -598,8 +608,17 @@ class Controller:
 
         # generative cognition: hypotheses, then independent critique
         response = self.gateway.ask("hypotheses", context)
+        # blocked-by-the-human filter: what a pending decision touches
+        # (its factor, its exact signature) waits; the rest proceeds
+        blocked_factors = {e["decision"].params.get("factor_id")
+                           for e in self._pending.values()
+                           if e["decision"].params.get("factor_id")}
+        pending_sigs = {self._signature(e["decision"])
+                        for e in self._pending.values()}
         hyps = [h for h in response.hypotheses
-                if self._signature(h) not in self._denied_signatures]
+                if self._signature(h) not in self._denied_signatures
+                and self._signature(h) not in pending_sigs
+                and h.params.get("factor_id") not in blocked_factors]
         for h in hyps:
             self.runtime.emit(Ev.HYPOTHESIS_CREATED,
                               {"hypothesis": h.to_dict()}, Actor.SYSTEM)
@@ -616,6 +635,16 @@ class Controller:
             h.success_prob = self.self_model.calibrated_success(
                 h.params.get("domain", "general"), h.action_name, h.success_prob)
         if not hyps:
+            if self._pending:
+                # everything actionable is behind your decisions: the loop
+                # stands still HERE, and only here
+                self.runtime.emit(Ev.CYCLE_COMPLETED,
+                                  {"cycle": self.cycle,
+                                   "blocked_on_human": sorted(self._pending)},
+                                  Actor.SYSTEM)
+                self._set_state(SysState.WAITING_HUMAN)
+                return CycleResult(self.cycle, "waiting_human",
+                                   next(iter(self._pending)))
             return self._escalate("no viable hypotheses for open targets")
 
         antagonisms = []
@@ -758,10 +787,12 @@ class Controller:
                               {"cycle": self.cycle, "denied": decision.id}, Actor.SYSTEM)
             return CycleResult(self.cycle, "denied", decision.id)
         if verdict["status"] == VerdictStatus.HUMAN_REQUIRED.value:
-            self._pending = {"decision": decision, "verdict": verdict}
+            # parked, not blocking: the next cycle works on everything
+            # this decision does not touch
+            self._pending[decision.id] = {"decision": decision,
+                                          "verdict": verdict}
             self.runtime.emit(Ev.CYCLE_COMPLETED,
                               {"cycle": self.cycle, "waiting": decision.id}, Actor.SYSTEM)
-            self._set_state(SysState.WAITING_HUMAN)
             return CycleResult(self.cycle, "waiting_human", decision.id)
 
         self._check_control()

@@ -40,7 +40,15 @@ def _note(body: dict, x_user: str | None) -> str:
 
 
 def create_app(ctrl: Controller) -> FastAPI:
+    import threading
+
     app = FastAPI(title="PGDCA Phase 0", version="0.1.0")
+    # autonomy: the loop advances BY ITSELF (the human supervises, not
+    # cranks). The runner thread (started by main) and the GUI's manual
+    # controls share this state and this lock.
+    app.state.autonomy = {"enabled": True, "interval_s": 3.0,
+                          "idle_interval_s": 10.0, "backoff_s": 60.0}
+    app.state.ctrl_lock = threading.Lock()
 
     def guard(fn):
         try:
@@ -73,7 +81,16 @@ def create_app(ctrl: Controller) -> FastAPI:
             # shown in the GUI header: judging canned mock output as "the
             # system's reasoning" is a real misunderstanding to prevent
             "llm_adapter": type(ctrl.gateway.adapter).__name__,
+            "autonomy": {"enabled": app.state.autonomy["enabled"]},
         }
+
+    @app.post("/api/autonomy")
+    def set_autonomy(body: dict = Body(...),
+                     x_actor: str | None = Header(default=None)):
+        if _actor(x_actor) != Actor.HUMAN:
+            raise HTTPException(403, "autonomy is toggled by the human")
+        app.state.autonomy["enabled"] = bool(body.get("enabled"))
+        return {"enabled": app.state.autonomy["enabled"]}
 
     @app.get("/api/graph")
     def graph():
@@ -655,7 +672,10 @@ def create_app(ctrl: Controller) -> FastAPI:
     @app.post("/api/step")
     def step(body: dict = Body(default={})):
         n = int(body.get("n", 1))
-        results = [ctrl.step().__dict__ for _ in range(max(1, min(n, 50)))]
+        results = []
+        for _ in range(max(1, min(n, 50))):
+            with app.state.ctrl_lock:      # non calpestare il runner autonomo
+                results.append(ctrl.step().__dict__)
         return {"results": results, "state": ctrl.state.value}
 
     @app.post("/api/pending/resolve")
@@ -665,7 +685,10 @@ def create_app(ctrl: Controller) -> FastAPI:
         actor = _actor(x_actor)
         if actor != Actor.HUMAN:
             raise HTTPException(403, "pending decisions are resolved by the human")
-        r = ctrl.resolve_pending(bool(body.get("approve")), _note(body, x_user))
+        with app.state.ctrl_lock:
+            r = guard(lambda: ctrl.resolve_pending(
+                bool(body.get("approve")), _note(body, x_user),
+                decision_id=body.get("decision_id") or None))
         return {"result": r.__dict__ if r else None, "state": ctrl.state.value}
 
     @app.post("/api/verdicts/{verdict_id}/override")
@@ -753,6 +776,16 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     parser.add_argument("--empty", action="store_true",
                         help="start with an empty world instead of the toy "
                              "scenario (bring your own goals via the GUI)")
+    parser.add_argument("--no-autonomy", action="store_true",
+                        help="do not advance by itself (manual stepping "
+                             "from the GUI only)")
+    parser.add_argument("--no-autoconnect", action="store_true",
+                        help="do not self-configure the connectors at boot "
+                             "(by default the system probes what exists - "
+                             "CallAPICall bridge, email credentials, "
+                             "Playwright - and wires it by itself)")
+    parser.add_argument("--pace", type=float, default=3.0,
+                        help="seconds between autonomous cycles (default 3)")
     args = parser.parse_args()
 
     adapter = None
@@ -784,6 +817,44 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
             PlaywrightBrowserAdapter,
         )
         browser = PlaywrightBrowserAdapter()
+
+    # --------------------------- autonomous setup (self-configuration)
+    # the system wires by itself whatever is actually available on this
+    # machine; the human supervises from the Collegamenti tab, not from
+    # command-line flags
+    import importlib.util as _ilu
+    import os as _os
+    if not args.no_autoconnect:
+        if voice is None:
+            try:
+                import requests as _rq
+                url = _os.environ.get("CALLBRIDGE_CONTROL_URL",
+                                      "http://127.0.0.1:8770").rstrip("/")
+                if _rq.get(url + "/health", timeout=2).status_code == 200:
+                    from examples.adapters.call_api_call_adapter import (
+                        CallAPICallAdapter,
+                    )
+                    voice = CallAPICallAdapter()
+                    print(f"[pgdca] auto-connect: bridge CallAPICall vivo su "
+                          f"{url} -> porta voce collegata", flush=True)
+            except Exception:  # noqa: BLE001 - bridge spento: nessun dramma
+                pass
+        if email is None and _os.environ.get("PGDCA_EMAIL_ADDRESS") \
+                and _os.environ.get("PGDCA_EMAIL_PASSWORD"):
+            from examples.adapters.email_smtp_imap_adapter import (
+                SmtpImapEmailAdapter,
+            )
+            email = SmtpImapEmailAdapter()
+            print("[pgdca] auto-connect: credenziali email presenti -> "
+                  "porta email collegata", flush=True)
+        if browser is None and _ilu.find_spec("playwright") is not None:
+            from examples.adapters.playwright_browser_adapter import (
+                PlaywrightBrowserAdapter,
+            )
+            browser = PlaywrightBrowserAdapter()
+            print("[pgdca] auto-connect: Playwright installato -> browser "
+                  "reale collegato (parte alla prima navigazione)",
+                  flush=True)
     ctrl, _env = create(db_path=args.db, adapter=adapter,
                         build=not args.empty)
     # expose the external-world connection points: DISABLED placeholders by
@@ -800,6 +871,39 @@ def main() -> None:  # pragma: no cover - manual server entrypoint
     # the GUI's Integrations tab reflects and can rewire what the flags set
     app.state.init_connectors(voice=voice, email=email, browser=browser,
                               mocks=args.mock_ports)
+
+    # ------------------------------------------------ autonomous runner
+    # the loop advances by itself; the human supervises. It stands still
+    # while a decision waits for the human, while paused/stopped, and
+    # backs off after an escalation (the thread already awaits an answer).
+    import threading
+    import time as _time
+
+    if args.no_autonomy:
+        app.state.autonomy["enabled"] = False
+    app.state.autonomy["interval_s"] = args.pace
+
+    def _runner() -> None:
+        auto = app.state.autonomy
+        while True:
+            try:
+                if not auto["enabled"] or ctrl.state.value in (
+                        "WAITING_HUMAN", "PAUSED", "STOPPED"):
+                    _time.sleep(1.0)
+                    continue
+                with app.state.ctrl_lock:
+                    r = ctrl.step()
+                if r.status == "idle":
+                    _time.sleep(auto["idle_interval_s"])
+                elif r.status == "escalated":
+                    _time.sleep(auto["backoff_s"])
+                else:
+                    _time.sleep(auto["interval_s"])
+            except Exception as exc:  # noqa: BLE001 - il runner non muore mai
+                print(f"[pgdca] ciclo autonomo fallito: {exc}", flush=True)
+                _time.sleep(auto["backoff_s"])
+
+    threading.Thread(target=_runner, name="autonomy", daemon=True).start()
     engine = ("llmswitch (provider scelto nel tab LLM della GUI)"
               if adapter is not None else "mock deterministico (di prova)")
     real = [n for n, a in (("voce/CallAPICall", voice), ("email/SMTP", email),
@@ -818,6 +922,9 @@ PGDCA avviato.
   Memoria:       {"usa e getta (:memory:)" if args.db == ":memory:"
                   else args.db + " (persistente: riprende da dove era)"}
   Porte esterne: {ports_state}
+  Autonomia:     {"SPENTA (passi manuali dalla GUI)" if args.no_autonomy
+                  else f"attiva - lavora da solo (un ciclo ogni ~{args.pace:g}s),"
+                       " si ferma quando serve una tua decisione"}
 Ctrl+C per fermare.""", flush=True)
     # without a graceful-shutdown cap, Ctrl+C hangs on Windows: the GUI's
     # open SSE stream (/api/events/stream) never closes by itself and
